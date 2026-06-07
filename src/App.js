@@ -61,9 +61,10 @@ const queryParamToContext = {
     use_expanded_view: "use_expanded_view",
     do_not_restore: "noRestore",
     locale: "locale",
+    session_mode: "session_mode",
 };
 
-const queryParamsToKeep = ["use_expanded_view", "to", "do_not_restore", "locale"];
+const queryParamsToKeep = ["use_expanded_view", "to", "do_not_restore", "locale", "session_mode"];
 
 let treatmentMapping;
 
@@ -317,6 +318,28 @@ class App extends React.Component {
                                                 removeProgress={
                                                     this.removeProgress
                                                 }
+                                                {...props}
+                                            />
+                                        )}
+                                    />
+                                    <Route
+                                        path="/courses/:courseNum/agent-lab"
+                                        render={(props) => (
+                                            <Platform
+                                                key={Date.now()}
+                                                saveProgress={() =>
+                                                    this.saveProgress()
+                                                }
+                                                loadBktProgress={
+                                                    this.loadBktProgress
+                                                }
+                                                removeProgress={
+                                                    this.removeProgress
+                                                }
+                                                courseNum={
+                                                    props.match.params.courseNum
+                                                }
+                                                curriculumAgentLab={true}
                                                 {...props}
                                             />
                                         )}

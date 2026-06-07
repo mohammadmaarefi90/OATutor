@@ -5,12 +5,14 @@ import { Link } from "react-router-dom";
 import clsx from "clsx";
 import ZoomImage from "@components/ZoomImage";
 
+import { SITE_SHORT_NAME, LEGACY_PLATFORM_NAME } from "../../config/config";
+
 const CanvasAssignments = () => {
     const classes = useStyles()
 
     return <>
         <h1>
-            Creating OATutor Assignments Through Canvas
+            Creating {SITE_SHORT_NAME} Assignments Through Canvas
         </h1>
         <h4 style={{
             marginTop: 0
@@ -22,7 +24,7 @@ const CanvasAssignments = () => {
 
         Make sure that you have followed the previous tutorial to set up the Canvas integration first! You may re-visit
         the tutorial with this link: <Link to={"/posts/set-up-canvas-integration"}>Setting up Canvas to work with
-        OATutor</Link>
+        {SITE_SHORT_NAME}</Link>
 
         <h4>Navigating to the Create Assignment Page</h4>
 
@@ -64,8 +66,8 @@ const CanvasAssignments = () => {
                 src={`${process.env.PUBLIC_URL}/static/images/posts/canvas-assignments/submission%20type.PNG`}/>
         </div>
 
-        In the "Configure External Tool" window that pops up, click on the external tool that corresponds with OATutor.
-        After seeing the URL field get populated, click select to confirm using OATutor for this assignment.
+        In the "Configure External Tool" window that pops up, click on the external tool that corresponds with {LEGACY_PLATFORM_NAME} or {SITE_SHORT_NAME}.
+        After seeing the URL field get populated, click select to confirm using the tutoring tool for this assignment.
 
         <div className={clsx(classes.fullWidth, classes.textCenter, classes["p-8"])}>
             <ZoomImage

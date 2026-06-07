@@ -1,5 +1,5 @@
 import React, { useContext } from "react";
-import { findLessonById, _lessonPlansNoEditor, ThemeContext } from "../config/config";
+import { findLessonById, _lessonPlansNoEditor, ThemeContext, SITE_SHORT_NAME } from "../config/config";
 import { AppBar, Box, Toolbar } from "@material-ui/core";
 import Grid from "@material-ui/core/Grid";
 import Divider from "@material-ui/core/Divider";
@@ -45,7 +45,7 @@ const AssignmentAlreadyLinked = (props) => {
                                     lesson {linkedLesson.name} {linkedLesson.topic} successfully!</h1>
                                 : <h1>This assignment has been linked successfully!</h1>
                             }
-                            <h2>To link a new OATutor lesson, please create a new assignment on your LMS.</h2>
+                            <h2>To link a new {SITE_SHORT_NAME} lesson, please create a new assignment on your LMS.</h2>
                             <h2>To preview the lesson, click on "Student View" on Canvas.</h2>
                         </center>
                         <Divider/>

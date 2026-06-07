@@ -2,7 +2,7 @@ import React from "react";
 import courses from "../content-sources/oatutor/coursePlans.json";
 import { calculateSemester } from "../util/calculateSemester.js";
 
-import { SITE_NAME } from "@common/global-config";
+import { SITE_NAME, SITE_SHORT_NAME, SITE_SLUG, LEGACY_PLATFORM_NAME } from "@common/global-config";
 import { cleanObjectKeys } from "../util/cleanObject";
 
 const ThemeContext = React.createContext(0);
@@ -78,9 +78,7 @@ const dynamicText = {
     "%CAR%": "Tesla car",
 };
 
-const _SHORT_SITE_NAME = SITE_NAME.toLowerCase()
-    .replace(/[^a-z]/g, "")
-    .substr(0, 16);
+const _SHORT_SITE_NAME = SITE_SLUG;
 
 const USER_ID_STORAGE_KEY = `${_SHORT_SITE_NAME}-user_id`;
 const PROGRESS_STORAGE_KEY = `${_SHORT_SITE_NAME}-progress`;
@@ -161,6 +159,8 @@ export {
     USER_ID_STORAGE_KEY,
     PROGRESS_STORAGE_KEY,
     SITE_NAME,
+    SITE_SHORT_NAME,
+    LEGACY_PLATFORM_NAME,
     HELP_DOCUMENT,
     SHOW_COPYRIGHT,
     CURRENT_SEMESTER,

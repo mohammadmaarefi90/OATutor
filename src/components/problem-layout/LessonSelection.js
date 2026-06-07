@@ -7,7 +7,7 @@ import Paper from '@material-ui/core/Paper';
 import { withStyles } from '@material-ui/core/styles';
 import styles from './common-styles.js';
 import IconButton from '@material-ui/core/IconButton';
-import { _coursePlansNoEditor, ThemeContext, SITE_NAME, SHOW_COPYRIGHT } from '../../config/config.js';
+import { _coursePlansNoEditor, ThemeContext, SITE_NAME, SITE_SHORT_NAME, SHOW_COPYRIGHT } from '../../config/config.js';
 import Spacer from "../Spacer";
 import HelpOutlineOutlinedIcon from "@material-ui/icons/HelpOutlineOutlined";
 import { Typography } from "@material-ui/core";
@@ -18,6 +18,9 @@ import Popup from '../Popup/Popup.js';
 import About from '../../pages/Posts/About.js';
 import MenuBookIcon from '@material-ui/icons/MenuBook';
 import { LocalizationConsumer } from '../../util/LocalizationContext';
+import { buildLessonUrl } from '../../agent/sessionMode.js';
+import SmartToyIcon from '@material-ui/icons/Android';
+import PersonIcon from '@material-ui/icons/Person';
 
 class LessonSelection extends React.Component {
     static contextType = ThemeContext;
@@ -100,7 +103,7 @@ class LessonSelection extends React.Component {
                             <center>
                                 {this.isPrivileged
                                     ? <h1>{translate('lessonSelection.welcomeInstructor')}</h1>
-                                    : <h1>{translate('lessonSelection.welcomeTo')} {SITE_NAME.replace(/\s/, "")}!</h1>
+                                    : <h1>{translate('lessonSelection.welcomeTo')} {SITE_SHORT_NAME}!</h1>
                                 }
 
                                 <h2>{translate('lessonSelection.select')} {selectionMode === "course" ? translate('lessonSelection.course') : translate('lessonSelection.lessonplan')}</h2>
@@ -113,6 +116,38 @@ class LessonSelection extends React.Component {
                             </center>
                             <Divider/>
                             <Spacer/>
+                            {selectionMode === "lesson" && (
+                                <Box mb={3}>
+                                    <Paper
+                                        style={{
+                                            padding: 16,
+                                            borderLeft: "4px solid #1565c0",
+                                            backgroundColor: "#e3f2fd",
+                                        }}
+                                    >
+                                        <Typography variant="subtitle1" gutterBottom>
+                                            Full curriculum agent lab
+                                        </Typography>
+                                        <Typography variant="body2" color="textSecondary" paragraph>
+                                            Train Memory, RL, and LLM agents on every lesson in this
+                                            course, then evaluate on a held-out test set of similar
+                                            problems not seen during training.
+                                        </Typography>
+                                        <Button
+                                            variant="contained"
+                                            style={{ backgroundColor: "#1565c0", color: "#fff" }}
+                                            startIcon={<SmartToyIcon />}
+                                            onClick={() =>
+                                                this.props.history.push(
+                                                    `/courses/${courseNum}/agent-lab`
+                                                )
+                                            }
+                                        >
+                                            Curriculum Train & Test
+                                        </Button>
+                                    </Paper>
+                                </Box>
+                            )}
                             <Grid container spacing={3}>
                                 {selectionMode === "course"
                                     ? this.coursePlans
@@ -165,9 +200,21 @@ class LessonSelection extends React.Component {
           variant="contained"
           color="primary"
           className={classes.button}
-          onClick={() => this.props.history.push(`/lessons/${lesson.id}`)}
+          startIcon={<PersonIcon />}
+          onClick={() => this.props.history.push(buildLessonUrl(lesson.id, 'student'))}
+          style={{ marginBottom: 8, width: '100%' }}
         >
-          {translate('lessonSelection.onlyselect')}
+          Study Myself
+        </Button>
+        <Button
+          variant="outlined"
+          color="primary"
+          className={classes.button}
+          startIcon={<SmartToyIcon />}
+          onClick={() => this.props.history.push(buildLessonUrl(lesson.id, 'agent'))}
+          style={{ width: '100%' }}
+        >
+          Train Agent
         </Button>
       </Paper>
     </center>

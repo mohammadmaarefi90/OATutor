@@ -3,7 +3,7 @@ import Spacer from "@components/Spacer";
 import { useStyles } from "./Posts";
 import clsx from "clsx";
 import ZoomImage from "@components/ZoomImage";
-import { SITE_NAME } from "../../config/config";
+import { SITE_NAME, SITE_SHORT_NAME, LEGACY_PLATFORM_NAME } from "../../config/config";
 
 const createCourseLink = "https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-create-a-new-course-from-the-Dashboard-as-an-instructor/ta-p/794"
 
@@ -21,7 +21,7 @@ const SetUpCanvasIntegration = () => {
 
     return <>
         <h1>
-            Setting up Canvas to work with OATutor (formerly known as OpenITS)
+            Setting up Canvas to work with {SITE_SHORT_NAME} (based on {LEGACY_PLATFORM_NAME})
         </h1>
         <h4 style={{
             marginTop: 0
@@ -36,7 +36,7 @@ const SetUpCanvasIntegration = () => {
 
         <h4>Navigating to the Course App Settings</h4>
 
-        Select the course you want to add OATutor to.
+        Select the course you want to add {SITE_SHORT_NAME} to.
 
         <div className={clsx(classes.fullWidth, classes.textCenter, classes["p-8"])}>
             <ZoomImage

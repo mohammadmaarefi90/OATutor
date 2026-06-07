@@ -1,5 +1,7 @@
 import React from "react";
-import { AppBar, Toolbar } from "@material-ui/core";
+import AppBar from "@material-ui/core/AppBar";
+import Toolbar from "@material-ui/core/Toolbar";
+import Button from "@material-ui/core/Button";
 import LinearProgress from "@material-ui/core/LinearProgress";
 import Grid from "@material-ui/core/Grid";
 import ProblemWrapper from "@components/problem-layout/ProblemWrapper.js";
@@ -26,6 +28,14 @@ import ErrorBoundary from "@components/ErrorBoundary";
 import { CONTENT_SOURCE } from "@common/global-config";
 import withTranslation from '../util/withTranslation';
 import { LocalizationConsumer } from '../util/LocalizationContext';
+import AgentTrainingPanel from "@components/agent/AgentTrainingPanel.js";
+import CurriculumAgentLab from "@components/agent/CurriculumAgentLab.js";
+import { getSessionModeFromLocation, buildLessonUrl } from "../agent/sessionMode.js";
+import { SESSION_MODES } from "../agent/storageKeys.js";
+import {
+    computeLessonMastery,
+    filterProblemsForLesson,
+} from "../agent/problemSelection.js";
 
 let problemPool = require(`@generated/processed-content-pool/${CONTENT_SOURCE}.json`);
 
@@ -77,6 +87,7 @@ class Platform extends React.Component {
         }
 
         this.selectLesson = this.selectLesson.bind(this);
+        this.sessionMode = SESSION_MODES.STUDENT;
     }
 
     componentDidMount() {
@@ -122,6 +133,13 @@ class Platform extends React.Component {
                 enterCourse(course.courseName, course.language);
             }
 
+        } else if (this.props.curriculumAgentLab && this.props.courseNum != null) {
+            const course = coursePlans[parseInt(this.props.courseNum)];
+            if (course) {
+                this.course = course;
+                enterCourse(course.courseName, course.language);
+            }
+            this.setState({ status: "curriculumAgentLab" });
         } else if (this.props.courseNum != null) {
 
             const course = coursePlans[parseInt(this.props.courseNum)];
@@ -164,6 +182,16 @@ class Platform extends React.Component {
             if (lesson) {
                 this.selectLesson(lesson, false);
             }
+        }
+
+        const prevMode = getSessionModeFromLocation(prevProps.location, this.props.lessonID);
+        const nextMode = getSessionModeFromLocation(this.props.location, this.props.lessonID);
+        if (
+            this.props.lessonID != null &&
+            prevMode !== nextMode &&
+            this.lesson
+        ) {
+            this.selectLesson(this.lesson, false);
         }
         
         // If course changed
@@ -331,6 +359,30 @@ class Platform extends React.Component {
             );
             this.completedProbs = new Set(prevCompletedProbs);
         }
+
+        this.sessionMode = getSessionModeFromLocation(
+            this.props.location,
+            lesson.id
+        );
+
+        if (this.sessionMode === SESSION_MODES.AGENT) {
+            const lessonProblems = filterProblemsForLesson(
+                this.problemIndex.problems,
+                this.lesson
+            );
+            const initialMastery = computeLessonMastery(
+                this.lesson,
+                this.context.bktParams,
+                lessonProblems
+            );
+            this.setState({
+                status: "agentTraining",
+                currProblem: null,
+                mastery: initialMastery,
+            });
+            return;
+        }
+
         this.setState(
             {
                 currProblem: this._nextProblem(
@@ -662,14 +714,12 @@ class Platform extends React.Component {
                                         paddingTop: "3px",
                                     }}
                                 >
-                                    {Boolean(
-                                        findLessonById(this.props.lessonID)
-                                    )
-                                        ? findLessonById(this.props.lessonID)
-                                              .name +
+                                    {this.state.status === "curriculumAgentLab" && this.course
+                                        ? `${this.course.courseName} — Agent Lab`
+                                        : Boolean(findLessonById(this.props.lessonID))
+                                        ? findLessonById(this.props.lessonID).name +
                                           " " +
-                                          findLessonById(this.props.lessonID)
-                                              .topics
+                                          findLessonById(this.props.lessonID).topics
                                         : ""}
                                 </div>
                             </Grid>
@@ -680,13 +730,33 @@ class Platform extends React.Component {
                                         paddingTop: "3px",
                                     }}
                                 >
+                                    {this.state.status === "learning" &&
+                                        this.lesson && (
+                                            <Button
+                                                size="small"
+                                                color="inherit"
+                                                style={{ marginRight: 8 }}
+                                                onClick={() =>
+                                                    this.props.history.push(
+                                                        buildLessonUrl(
+                                                            this.lesson.id,
+                                                            SESSION_MODES.AGENT
+                                                        )
+                                                    )
+                                                }
+                                            >
+                                                Train Agent
+                                            </Button>
+                                        )}
                                     {this.state.status !== "courseSelection" &&
                                     this.state.status !== "lessonSelection" &&
+                                    this.state.status !== "curriculumAgentLab" &&
+                                    this.lesson &&
                                     (this.lesson.showStuMastery == null ||
                                         this.lesson.showStuMastery)
                                         ? this.studentNameDisplay +
                                         translate('platform.Mastery') +
-                                          Math.round(this.state.mastery * 100) +
+                                          Math.round((this.state.mastery || 0) * 100) +
                                           "%"
                                         : ""}
                                 </div>
@@ -743,6 +813,55 @@ class Platform extends React.Component {
                             lessonID={this.props.lessonID}
                             displayMastery={this.displayMastery}
                             progressPercent={this.getProgressBarData().percent / 100}
+                        />
+                    </ErrorBoundary>
+                ) : (
+                    ""
+                )}
+                {this.state.status === "agentTraining" ? (
+                    <ErrorBoundary
+                        componentName={"AgentTrainingPanel"}
+                        descriptor={"agent training"}
+                    >
+                        <AgentTrainingPanel
+                            lesson={this.lesson}
+                            problems={this.problemIndex.problems}
+                            displayMastery={this.displayMastery}
+                            saveProgress={this.props.saveProgress}
+                            history={this.props.history}
+                            courseNum={coursePlans.findIndex(
+                                (c) => c.lessons?.some((l) => l.id === this.lesson?.id)
+                            )}
+                            initialMastery={
+                                this.state.mastery ??
+                                (this.lesson
+                                    ? computeLessonMastery(
+                                          this.lesson,
+                                          this.context.bktParams,
+                                          filterProblemsForLesson(
+                                              this.problemIndex.problems,
+                                              this.lesson
+                                          )
+                                      )
+                                    : 0)
+                            }
+                        />
+                    </ErrorBoundary>
+                ) : (
+                    ""
+                )}
+                {this.state.status === "curriculumAgentLab" && this.course ? (
+                    <ErrorBoundary
+                        componentName={"CurriculumAgentLab"}
+                        descriptor={"curriculum agent lab"}
+                    >
+                        <CurriculumAgentLab
+                            course={this.course}
+                            lessons={this.course.lessons || []}
+                            problems={this.problemIndex.problems}
+                            browserStorage={this.context.browserStorage}
+                            history={this.props.history}
+                            courseNum={this.props.courseNum}
                         />
                     </ErrorBoundary>
                 ) : (
