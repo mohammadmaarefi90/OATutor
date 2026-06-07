@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Proposition-BKT Demo</title>
+  <style>
+    :root { --bg: #0f1419; --panel: #1a2332; --text: #e7ecf3; --muted: #8b9cb3; --accent: #5b9fd4; --up: #4ade80; --down: #f87171; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; line-height: 1.5; }
+    h1 { margin: 0 0 8px; font-size: 1.5rem; }
+    .sub { color: var(--muted); margin-bottom: 20px; }
+    .toolbar { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+    button, select { background: var(--panel); color: var(--text); border: 1px solid #334; padding: 8px 14px; border-radius: 8px; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .panel { background: var(--panel); border-radius: 12px; padding: 16px; border: 1px solid #2a3548; }
+    .panel h2 { margin: 0 0 12px; font-size: 1rem; color: var(--accent); }
+    .event { padding: 10px 0; border-bottom: 1px solid #2a3548; }
+    .event:last-child { border-bottom: none; }
+    .event-title { font-weight: 600; font-size: 0.9rem; }
+    .prop { font-size: 0.85rem; margin: 4px 0; display: flex; justify-content: space-between; gap: 8px; }
+    .prob { font-variant-numeric: tabular-nums; color: var(--accent); }
+    .delta-up { color: var(--up); font-size: 0.75rem; }
+    .delta-down { color: var(--down); font-size: 0.75rem; }
+    pre { background: #0a0e14; padding: 12px; border-radius: 8px; overflow: auto; max-height: 420px; font-size: 0.75rem; }
+    .summary { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+    .stat { background: #0a0e14; padding: 10px 14px; border-radius: 8px; }
+    .stat span { display: block; font-size: 1.25rem; font-weight: 700; color: var(--accent); }
+    .stat label { font-size: 0.75rem; color: var(--muted); }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <h1>Proposition-BKT Demo</h1>
+  <p class="sub">Proposition-centric BKT — parallel to OATutor KC-BKT. Run fixtures live in the browser.</p>
+
+  <div class="toolbar">
+    <select id="fixture">
+      <option value="one-step-three-hints.json">One step, three hints</option>
+      <option value="multi-hint-wrong-then-correct.json">Multi wrong → hints → correct</option>
+    </select>
+    <button id="run">Run simulation</button>
+    <a id="jsonLink" href="/api/graph" target="_blank">Open belief graph JSON</a>
+  </div>
+
+  <div class="summary" id="summary"></div>
+  <div class="grid">
+    <div class="panel">
+      <h2>Event timeline</h2>
+      <div id="timeline"></div>
+    </div>
+    <div class="panel">
+      <h2>Belief graph export</h2>
+      <pre id="graph"></pre>
+    </div>
+  </div>
+
+  <script>
+    async function run() {
+      const fixture = document.getElementById("fixture").value;
+      const res = await fetch(`/api/run?fixture=${encodeURIComponent(fixture)}`);
+      const data = await res.json();
+      document.getElementById("summary").innerHTML = `
+        <div class="stat"><label>Nodes</label><span>${data.graph.nodes.length}</span></div>
+        <div class="stat"><label>Behavioral edges</label><span>${data.graph.behavioralEdges.length}</span></div>
+        <div class="stat"><label>Uncertain</label><span>${data.graph.beliefSummary.uncertain.length}</span></div>
+        <div class="stat"><label>KC (linear_slope)</label><span>${(data.kc.linear_slope ?? 0).toFixed(3)}</span></div>
+      `;
+      document.getElementById("timeline").innerHTML = data.steps.map((s) => `
+        <div class="event">
+          <div class="event-title">${s.label}</div>
+          ${s.top5.map((p) => `
+            <div class="prop">
+              <span>${p.text}</span>
+              <span class="prob">${p.probMastery.toFixed(3)}${p.delta != null ? `<span class="${p.delta >= 0 ? "delta-up" : "delta-down"}"> ${p.delta >= 0 ? "+" : ""}${p.delta.toFixed(4)}</span>` : ""}</span>
+            </div>
+          `).join("")}
+        </div>
+      `).join("");
+      document.getElementById("graph").textContent = JSON.stringify(data.graph, null, 2);
+      document.getElementById("jsonLink").href = `/api/graph?fixture=${encodeURIComponent(fixture)}`;
+    }
+    document.getElementById("run").addEventListener("click", run);
+    run();
+  </script>
+</body>
+</html>

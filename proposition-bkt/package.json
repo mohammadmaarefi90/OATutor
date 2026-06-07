@@ -1,0 +1,26 @@
+{
+  "name": "@oatutor/proposition-bkt",
+  "version": "1.0.0",
+  "description": "Proposition-centric Bayesian Knowledge Tracing — a parallel alternative to KC-based BKT",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "demo": "node examples/run-demo.mjs --fixture test/fixtures/one-step-three-hints.json",
+    "serve": "node examples/serve-demo.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "bkt",
+    "bayesian-knowledge-tracing",
+    "proposition",
+    "adaptive-learning",
+    "oatutor"
+  ],
+  "license": "MIT"
+}

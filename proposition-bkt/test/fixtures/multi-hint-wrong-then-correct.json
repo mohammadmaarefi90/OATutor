@@ -1,0 +1,61 @@
+{
+  "lessonId": "lesson-slope-multi",
+  "description": "Multiple wrong attempts, full hint pathway, then correct",
+  "problems": [
+    {
+      "id": "prob-slope-789",
+      "title": "Find the slope (multi-attempt)",
+      "steps": [
+        {
+          "id": "step-456",
+          "stepTitle": "Find the slope of the line through (1,2) and (3,8).",
+          "stepBody": "Find the slope of the line through (1,2) and (3,8).",
+          "canonicalAnswer": "The slope is 3.",
+          "knowledgeComponents": ["linear_slope"],
+          "hints": {
+            "DefaultPathway": [
+              {
+                "id": "hint-a",
+                "title": "Hint 1",
+                "text": "Slope is rise over run."
+              },
+              {
+                "id": "hint-b",
+                "title": "Hint 2",
+                "text": "Subtract y-values and x-values separately.",
+                "dependencies": ["hint-a"]
+              },
+              {
+                "id": "hint-c",
+                "title": "Hint 3",
+                "text": "Slope = (8−2)/(3−1).",
+                "dependencies": ["hint-b"]
+              }
+            ],
+            "WrongPathway": [
+              {
+                "id": "hint-wrong",
+                "title": "Wrong hint",
+                "text": "Add the x and y coordinates together."
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "skillModel": {
+    "step-456": ["linear_slope"]
+  },
+  "events": [
+    { "type": "session_start", "stepId": "step-456", "problemId": "prob-slope-789" },
+    { "type": "attempt", "stepId": "step-456", "problemId": "prob-slope-789", "correct": false, "firstTry": true },
+    { "type": "attempt", "stepId": "step-456", "problemId": "prob-slope-789", "correct": false, "firstTry": false },
+    { "type": "hint_reveal", "stepId": "step-456", "hintId": "hint-a" },
+    { "type": "attempt", "stepId": "step-456", "problemId": "prob-slope-789", "correct": false, "firstTry": false },
+    { "type": "hint_reveal", "stepId": "step-456", "hintId": "hint-b" },
+    { "type": "hint_reveal", "stepId": "step-456", "hintId": "hint-c" },
+    { "type": "attempt", "stepId": "step-456", "problemId": "prob-slope-789", "correct": true, "firstTry": false },
+    { "type": "session_end", "stepId": "step-456" }
+  ]
+}

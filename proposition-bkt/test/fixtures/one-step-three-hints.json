@@ -1,0 +1,80 @@
+{
+  "lessonId": "lesson-slope-1",
+  "description": "Single algebra step with 3 hints — wrong attempt, hint reveals, correct attempt",
+  "problems": [
+    {
+      "id": "prob-slope-456",
+      "title": "Find the slope",
+      "steps": [
+        {
+          "id": "step-123",
+          "stepTitle": "Find the slope of the line through (1,2) and (3,8).",
+          "stepBody": "Find the slope of the line through (1,2) and (3,8).",
+          "canonicalAnswer": "The slope is 3.",
+          "knowledgeComponents": ["linear_slope"],
+          "hints": {
+            "DefaultPathway": [
+              {
+                "id": "hint-1",
+                "title": "Hint 1",
+                "text": "Slope is rise over run."
+              },
+              {
+                "id": "hint-2",
+                "title": "Hint 2",
+                "text": "Subtract y-values and x-values separately.",
+                "dependencies": ["hint-1"]
+              },
+              {
+                "id": "hint-3",
+                "title": "Hint 3",
+                "text": "Slope = (8−2)/(3−1).",
+                "dependencies": ["hint-2"]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "skillModel": {
+    "step-123": ["linear_slope"]
+  },
+  "events": [
+    {
+      "type": "session_start",
+      "stepId": "step-123",
+      "problemId": "prob-slope-456"
+    },
+    {
+      "type": "attempt",
+      "stepId": "step-123",
+      "problemId": "prob-slope-456",
+      "correct": false,
+      "firstTry": true
+    },
+    {
+      "type": "hint_reveal",
+      "stepId": "step-123",
+      "hintId": "hint-1",
+      "pathwayIndex": 0
+    },
+    {
+      "type": "hint_reveal",
+      "stepId": "step-123",
+      "hintId": "hint-2",
+      "pathwayIndex": 1
+    },
+    {
+      "type": "attempt",
+      "stepId": "step-123",
+      "problemId": "prob-slope-456",
+      "correct": true,
+      "firstTry": false
+    },
+    {
+      "type": "session_end",
+      "stepId": "step-123"
+    }
+  ]
+}
