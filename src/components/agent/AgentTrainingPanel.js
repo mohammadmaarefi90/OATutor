@@ -29,6 +29,7 @@ import { buildLessonUrl } from "../../agent/sessionMode.js";
 import { SESSION_MODES } from "../../agent/storageKeys.js";
 import { filterProblemsForLesson } from "../../agent/problemSelection.js";
 import AgentEvaluationBox from "./AgentEvaluationBox.js";
+import LLMSettingsPanel from "./LLMSettingsPanel.js";
 
 const METRIC_ROWS = [
     { key: "masteryEnd", label: "Final Mastery", format: (v) => `${Math.round(v * 100)}%`, higher: true },
@@ -114,6 +115,8 @@ class AgentTrainingPanel extends React.Component {
                 return `${prefix}RL action=${event.action} state=${event.state}`;
             case "llm-response":
                 return `${prefix}LLM answer for ${event.stepId}`;
+            case "llm-error":
+                return `${prefix}LLM error: ${event.message || "unknown"}`;
             case "learn":
                 return `${prefix}Learned from hints on ${event.stepId}`;
             case "step-complete":
@@ -204,7 +207,7 @@ class AgentTrainingPanel extends React.Component {
                     const meta = AGENT_META[type];
                     const isRunning = running && runningAgent === type;
                     return (
-                        <Grid item xs={12} md={4} key={type}>
+                        <Grid item xs={12} sm={6} md={3} key={type}>
                             <Card
                                 variant="outlined"
                                 style={{ borderTop: `4px solid ${meta.color}`, height: "100%" }}
@@ -475,7 +478,37 @@ class AgentTrainingPanel extends React.Component {
                         BKT state for a fair benchmark.
                     </Typography>
 
+                    <LLMSettingsPanel browserStorage={this.context.browserStorage} />
+
                     {this.renderAgentCards(lessonProblems)}
+
+                    <Box mt={2}>
+                        <Card
+                            variant="outlined"
+                            style={{ borderTop: "4px solid #e65100" }}
+                        >
+                            <CardContent>
+                                <Typography variant="h6" gutterBottom>
+                                    {AGENT_META[AGENT_TYPES.LOCAL_LLM].label}
+                                </Typography>
+                                <Typography variant="body2" color="textSecondary" paragraph>
+                                    {AGENT_META[AGENT_TYPES.LOCAL_LLM].description}
+                                </Typography>
+                                <Button
+                                    variant="contained"
+                                    size="medium"
+                                    style={{ backgroundColor: "#e65100", color: "#fff" }}
+                                    startIcon={<PlayArrowIcon />}
+                                    onClick={() => this.startSingleAgent(AGENT_TYPES.LOCAL_LLM)}
+                                    disabled={running || lessonProblems.length === 0}
+                                >
+                                    {running && runningAgent === AGENT_TYPES.LOCAL_LLM
+                                        ? "Training local model..."
+                                        : "Train Local GPT-OSS Agent"}
+                                </Button>
+                            </CardContent>
+                        </Card>
+                    </Box>
 
                     <Box mt={2} display="flex" style={{ gap: 12, flexWrap: "wrap" }}>
                         <Button

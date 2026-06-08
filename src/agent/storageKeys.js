@@ -7,6 +7,8 @@ export const AGENT_PERFORMANCE_STORAGE_KEY = (lessonId, agentType = "memory") =>
 export const AGENT_RL_QTABLE_STORAGE_KEY = (lessonId) => `oatutor-agent-rl-qtable-${lessonId}`;
 export const AGENT_REASONING_STORAGE_KEY = (lessonId, agentType) =>
     `oatutor-agent-reasoning-${agentType}-${lessonId}`;
+export const AGENT_BELIEFS_STORAGE_KEY = (lessonId, agentType = "local-llm") =>
+    `oatutor-agent-beliefs-${agentType}-${lessonId}`;
 export const AGENT_COMPARISON_STORAGE_KEY = (lessonId) => `oatutor-agent-comparison-${lessonId}`;
 export const AGENT_EVALUATION_STORAGE_KEY = (lessonId) => `oatutor-agent-evaluation-${lessonId}`;
 export const AGENT_CURRICULUM_REPORT_STORAGE_KEY = (courseName) =>

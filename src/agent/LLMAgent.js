@@ -6,6 +6,11 @@ import ReasoningGraph from "./ReasoningGraph.js";
 import { AGENT_PERFORMANCE_STORAGE_KEY, AGENT_REASONING_STORAGE_KEY } from "./storageKeys.js";
 import { DYNAMIC_HINT_URL } from "../config/config.js";
 import { fetchDynamicHint } from "../components/problem-layout/DynamicHintHelper.js";
+import {
+    buildLLMAfterSnapshot,
+    buildLLMStepSnapshot,
+    getExpectedAnswerDisplay,
+} from "./llm/llmStepTrace.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -121,10 +126,22 @@ export default class LLMAgent extends BaseAgent {
 
         return new Promise((resolve) => {
             let resolved = false;
+            let streamed = "";
             const timeout = setTimeout(() => {
                 if (!resolved) {
                     resolved = true;
-                    resolve(null);
+                    const answer = this._extractAnswerFromLLM(streamed);
+                    resolve(
+                        streamed
+                            ? {
+                                  parsedAttempt: answer,
+                                  rawText: streamed,
+                                  reasoning: null,
+                                  content: streamed,
+                                  provider: "cloud-gpt4",
+                              }
+                            : null
+                    );
                 }
             }, 15000);
 
@@ -135,17 +152,27 @@ export default class LLMAgent extends BaseAgent {
                 DYNAMIC_HINT_URL,
                 { role: "user", message: prompt },
                 (chunk) => {
-                    if (!resolved && chunk?.length > 2) {
-                        const answer = this._extractAnswerFromLLM(chunk);
-                        if (answer) {
-                            resolved = true;
-                            clearTimeout(timeout);
-                            this.llmSuccesses += 1;
-                            resolve(answer);
-                        }
+                    streamed = chunk || streamed;
+                },
+                () => {
+                    if (!resolved) {
+                        resolved = true;
+                        clearTimeout(timeout);
+                        const answer = this._extractAnswerFromLLM(streamed);
+                        if (answer) this.llmSuccesses += 1;
+                        resolve(
+                            streamed
+                                ? {
+                                      parsedAttempt: answer,
+                                      rawText: streamed,
+                                      reasoning: null,
+                                      content: streamed,
+                                      provider: "cloud-gpt4",
+                                  }
+                                : null
+                        );
                     }
                 },
-                () => {},
                 () => {
                     if (!resolved) {
                         resolved = true;
@@ -177,30 +204,52 @@ export default class LLMAgent extends BaseAgent {
         let firstTry = false;
         let source = "none";
 
+        let llmBefore = null;
+        let llmAfter = null;
+        let finalAttemptAfter = null;
+        let usedHints = false;
+
         if (this.llmAvailable) {
             this._recordReasoningAction("llm-query", "requesting GPT answer");
-            attempt = await this._queryLLM(step, problem);
+            const llmResult = await this._queryLLM(step, problem);
+            attempt = llmResult?.parsedAttempt ?? null;
+            const llmCorrectBefore = attempt ? this._checkStepAnswer(step, attempt, seed) : false;
+            llmBefore = buildLLMStepSnapshot(llmResult, { correct: llmCorrectBefore });
             if (attempt) {
                 firstTry = true;
                 source = "llm";
                 this._recordReasoningAction("llm-response", attempt.slice(0, 50));
-                this._emit("llm-response", { stepId: step.id, attempt });
+                this._emit("llm-response", {
+                    stepId: step.id,
+                    attempt,
+                    rawText: llmBefore?.rawText,
+                });
             }
         } else {
             this._recordReasoningAction("llm-unavailable", "fallback to hints");
         }
 
         let isCorrect = attempt ? this._checkStepAnswer(step, attempt, seed) : false;
+        finalAttemptAfter = attempt;
 
         if (!isCorrect) {
             firstTry = false;
             this.llmFallbacks += 1;
+            usedHints = true;
             this._traceHintPathway(step);
             attempt = await this._learnFromHints(step, problem, seed, run);
+            finalAttemptAfter = attempt;
             source = this.llmAvailable ? "llm-fallback-hints" : "hints-no-llm";
             this._recordReasoningAction("hint-fallback", source);
             if (attempt) isCorrect = this._checkStepAnswer(step, attempt, seed);
         }
+
+        llmAfter = buildLLMAfterSnapshot({
+            attempt: finalAttemptAfter,
+            correct: isCorrect,
+            usedHints,
+            source,
+        });
 
         if (isCorrect) {
             if (firstTry) run.stepsCorrectFirstTry += 1;
@@ -211,7 +260,16 @@ export default class LLMAgent extends BaseAgent {
         }
 
         this._recordReasoningAnswer(attempt, isCorrect);
-        this._emit("step-complete", { stepId: step.id, isCorrect, firstTry, attempt, source });
+        this._emit("step-complete", {
+            stepId: step.id,
+            isCorrect,
+            firstTry,
+            attempt,
+            source,
+            llmBefore,
+            llmAfter,
+            expectedAnswer: getExpectedAnswerDisplay(step, seed),
+        });
         await sleep(this.stepDelayMs);
         return isCorrect;
     }

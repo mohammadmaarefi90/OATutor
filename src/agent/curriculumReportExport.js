@@ -4,11 +4,22 @@
 
 import { AGENT_CURRICULUM_REPORT_STORAGE_KEY } from "./storageKeys.js";
 
+function slimLLMSnapshot(snap) {
+    if (!snap) return null;
+    return {
+        ...snap,
+        rawText: snap.rawText?.slice?.(0, 4000) || snap.rawText,
+        reasoning: snap.reasoning?.slice?.(0, 4000) || snap.reasoning,
+        content: snap.content?.slice?.(0, 2000) || snap.content,
+    };
+}
+
 function slimSolveTrace(trace) {
     if (!trace) return null;
     return {
         problemId: trace.problemId,
         title: trace.title,
+        problemBody: trace.problemBody?.slice?.(0, 2000) || trace.problemBody,
         steps: (trace.steps || []).map((s) => ({
             stepIndex: s.stepIndex,
             stepId: s.stepId,
@@ -18,6 +29,11 @@ function slimSolveTrace(trace) {
             attempt: s.attempt,
             isCorrect: s.isCorrect,
             firstTry: s.firstTry,
+            source: s.source,
+            expectedAnswer: s.expectedAnswer,
+            llmBefore: slimLLMSnapshot(s.llmBefore),
+            llmAfter: s.llmAfter,
+            llmResponse: slimLLMSnapshot(s.llmResponse),
             actions: s.actions,
             timeline: s.timeline,
         })),

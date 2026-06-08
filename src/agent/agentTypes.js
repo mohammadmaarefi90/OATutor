@@ -2,6 +2,7 @@ export const AGENT_TYPES = {
     MEMORY: "memory",
     RL: "rl",
     LLM: "llm",
+    LOCAL_LLM: "local-llm",
 };
 
 export const AGENT_META = {
@@ -29,6 +30,25 @@ export const AGENT_META = {
             "Language-model agent that requests answers from the AI hint endpoint (falls back to hints if unavailable).",
         color: "#7b1fa2",
     },
+    [AGENT_TYPES.LOCAL_LLM]: {
+        id: AGENT_TYPES.LOCAL_LLM,
+        label: "Local GPT-OSS Agent",
+        shortLabel: "GPT-OSS",
+        description:
+            "Reasoning model via local llama.cpp (OpenAI-compatible API). Learns hint beliefs during training; uses them on held-out test problems.",
+        color: "#e65100",
+    },
 };
 
-export const ALL_AGENT_TYPES = Object.values(AGENT_TYPES);
+/** Original three agents — unchanged for comparison pipelines. */
+export const ALL_AGENT_TYPES = [
+    AGENT_TYPES.MEMORY,
+    AGENT_TYPES.RL,
+    AGENT_TYPES.LLM,
+];
+
+/** Includes local reasoning LLM for dedicated curriculum / single-agent runs. */
+export const ALL_CURRICULUM_AGENT_TYPES = [
+    ...ALL_AGENT_TYPES,
+    AGENT_TYPES.LOCAL_LLM,
+];

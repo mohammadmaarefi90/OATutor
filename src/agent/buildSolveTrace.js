@@ -10,6 +10,8 @@ function formatTimelineEvent(event) {
             return `RL chose action: ${event.action} (state: ${event.state})`;
         case "llm-response":
             return `LLM answered: "${truncate(event.attempt)}"`;
+        case "llm-error":
+            return `LLM error: ${event.message || "unknown"}`;
         case "step-complete":
             return `Submitted: "${truncate(event.attempt)}" → ${event.isCorrect ? "✓ correct" : "✗ incorrect"}${event.firstTry ? " (first try)" : ""}${event.reward != null ? ` [r=${event.reward}]` : ""}${event.source ? ` via ${event.source}` : ""}`;
         default:
@@ -29,10 +31,12 @@ export function buildSolveTrace(problem, run, sessionReasoning = null) {
     return {
         problemId: problem.id,
         title: problem.title,
+        problemBody: problem.body || "",
         steps: problem.steps.map((step, index) => {
             const stepEvents = (run?.events || []).filter((e) => e.stepId === step.id);
             const trace = sessionReasoning?.stepTraces?.find((t) => t.stepId === step.id);
             const complete = stepEvents.find((e) => e.type === "step-complete");
+            const llmResponse = stepEvents.find((e) => e.type === "llm-response");
 
             return {
                 stepIndex: index + 1,
@@ -52,6 +56,17 @@ export function buildSolveTrace(problem, run, sessionReasoning = null) {
                 reward: complete?.reward,
                 rlAction: complete?.action,
                 source: complete?.source,
+                expectedAnswer: complete?.expectedAnswer ?? null,
+                llmBefore: complete?.llmBefore ?? null,
+                llmAfter: complete?.llmAfter ?? null,
+                llmResponse: llmResponse
+                    ? {
+                          attempt: llmResponse.attempt,
+                          rawText: llmResponse.rawText,
+                          reasoning: llmResponse.reasoning,
+                          provider: llmResponse.provider,
+                      }
+                    : null,
             };
         }),
     };

@@ -27,7 +27,12 @@ import CrossLessonOrchestrator, {
     loadCurriculumReport,
 } from "../../agent/CrossLessonOrchestrator.js";
 import { buildCurriculumSplit } from "../../agent/curriculumSplit.js";
-import { AGENT_TYPES, AGENT_META, ALL_AGENT_TYPES } from "../../agent/agentTypes.js";
+import {
+    AGENT_TYPES,
+    AGENT_META,
+    ALL_AGENT_TYPES,
+} from "../../agent/agentTypes.js";
+import LLMSettingsPanel from "./LLMSettingsPanel.js";
 import {
     buildExportableCurriculumReport,
     buildStorableCurriculumReport,
@@ -57,7 +62,12 @@ class CurriculumAgentLab extends React.Component {
             activeProblemTab: 0,
             showProblemDetail: false,
             showJsonPreview: false,
+            pipelineAgentTypes: ALL_AGENT_TYPES,
         };
+    }
+
+    getActiveAgentTypes() {
+        return this.state.pipelineAgentTypes || ALL_AGENT_TYPES;
     }
 
     componentDidMount() {
@@ -88,10 +98,13 @@ class CurriculumAgentLab extends React.Component {
         if (saved) {
             try {
                 const clean = buildStorableCurriculumReport(saved) || saved;
+                const savedAgents = Object.keys(clean?.testEvaluation?.summary?.agents || {});
                 this.setState({
                     report: clean,
                     reportSavedAt: clean.timestamp,
                     events: [],
+                    pipelineAgentTypes:
+                        savedAgents.length > 0 ? savedAgents : ALL_AGENT_TYPES,
                     splitPreview: clean.split
                         ? { ...clean.split, stats: clean.split.stats, testProblems: clean.testProblems }
                         : null,
@@ -147,12 +160,9 @@ class CurriculumAgentLab extends React.Component {
         }
     }
 
-    runPipeline = async () => {
+    createOrchestrator = (agentTypes = ALL_AGENT_TYPES) => {
         const { course, lessons, problems, browserStorage } = this.props;
-
-        this.setState({ running: true, phase: "training", events: [], report: null });
-
-        this.orchestrator = new CrossLessonOrchestrator({
+        return new CrossLessonOrchestrator({
             course,
             lessons,
             problems,
@@ -163,7 +173,20 @@ class CurriculumAgentLab extends React.Component {
             browserStorage,
             onEvent: this.handleEvent,
             testRatio: 0.2,
+            agentTypes,
         });
+    };
+
+    runPipeline = async () => {
+        this.setState({
+            running: true,
+            phase: "training",
+            events: [],
+            report: null,
+            pipelineAgentTypes: ALL_AGENT_TYPES,
+        });
+
+        this.orchestrator = this.createOrchestrator(ALL_AGENT_TYPES);
 
         try {
             const report = await this.orchestrator.runFullPipeline();
@@ -185,23 +208,70 @@ class CurriculumAgentLab extends React.Component {
         if (this.orchestrator) this.orchestrator.cancel();
     };
 
-    runTestOnly = async () => {
-        const { course, lessons, problems, browserStorage } = this.props;
-
-        this.setState({ running: true, phase: "testing", events: [] });
-
-        this.orchestrator = new CrossLessonOrchestrator({
-            course,
-            lessons,
-            problems,
-            skillModel: this.context.skillModel,
-            bktParams: this.context.bktParams,
-            heuristic: this.context.heuristic,
-            hintPathway: this.context.hintPathway,
-            browserStorage,
-            onEvent: this.handleEvent,
-            testRatio: 0.2,
+    runLocalLLMPipeline = async () => {
+        const localOnly = [AGENT_TYPES.LOCAL_LLM];
+        this.setState({
+            running: true,
+            phase: "training",
+            events: [],
+            report: null,
+            pipelineAgentTypes: localOnly,
         });
+
+        this.orchestrator = this.createOrchestrator(localOnly);
+
+        try {
+            const report = await this.orchestrator.runFullPipeline();
+            const clean = buildStorableCurriculumReport(report) || report;
+            this.setState({
+                running: false,
+                report: clean,
+                reportSavedAt: clean.timestamp,
+                splitPreview: clean.split,
+                phase: "done",
+            });
+        } catch (err) {
+            console.error(err);
+            this.setState({ running: false, phase: null });
+        }
+    };
+
+    runLocalLLMTestOnly = async () => {
+        const localOnly = [AGENT_TYPES.LOCAL_LLM];
+        this.setState({
+            running: true,
+            phase: "testing",
+            events: [],
+            pipelineAgentTypes: localOnly,
+        });
+
+        this.orchestrator = this.createOrchestrator(localOnly);
+
+        try {
+            const report = await this.orchestrator.runTestOnly();
+            const clean = buildStorableCurriculumReport(report) || report;
+            this.setState({
+                running: false,
+                report: clean,
+                reportSavedAt: clean.timestamp,
+                splitPreview: clean.split,
+                phase: "done",
+            });
+        } catch (err) {
+            console.error(err);
+            this.setState({ running: false, phase: null });
+        }
+    };
+
+    runTestOnly = async () => {
+        this.setState({
+            running: true,
+            phase: "testing",
+            events: [],
+            pipelineAgentTypes: ALL_AGENT_TYPES,
+        });
+
+        this.orchestrator = this.createOrchestrator(ALL_AGENT_TYPES);
 
         try {
             const report = await this.orchestrator.runTestOnly();
@@ -318,6 +388,7 @@ class CurriculumAgentLab extends React.Component {
     renderTestProblemSet(report) {
         const testProblems = report?.testProblems || [];
         const evaluation = report?.testEvaluation;
+        const agentTypes = this.getActiveAgentTypes();
 
         return (
             <Box mt={3}>
@@ -326,7 +397,7 @@ class CurriculumAgentLab extends React.Component {
                 </Typography>
                 <Typography variant="body2" color="textSecondary" paragraph>
                     Held-out problems share curriculum skills with training lessons but were not
-                    used during training. Each row shows full scores for all three agents.
+                    used during training.
                 </Typography>
 
                 <Table size="small">
@@ -334,7 +405,7 @@ class CurriculumAgentLab extends React.Component {
                         <TableRow>
                             <TableCell>Problem</TableCell>
                             <TableCell>Lesson</TableCell>
-                            {ALL_AGENT_TYPES.map((t) => (
+                            {agentTypes.map((t) => (
                                 <TableCell key={t} align="center" style={{ color: AGENT_META[t].color }}>
                                     {AGENT_META[t].shortLabel}
                                 </TableCell>
@@ -358,13 +429,15 @@ class CurriculumAgentLab extends React.Component {
                                     }
                                 >
                                     <TableCell>
-                                        <Typography variant="body2">{title}</Typography>
+                                        <Typography variant="body2" style={{ fontWeight: 500 }}>
+                                            {title}
+                                        </Typography>
                                         <Typography variant="caption" color="textSecondary">
-                                            {problemId}
+                                            ID: {problemId}
                                         </Typography>
                                     </TableCell>
                                     <TableCell>{row.lessonTopics || row.lessonName || "—"}</TableCell>
-                                    {ALL_AGENT_TYPES.map((t) => {
+                                    {agentTypes.map((t) => {
                                         const agentResult =
                                             row.agents?.[t] ||
                                             evaluation?.problemResults?.find(
@@ -412,6 +485,7 @@ class CurriculumAgentLab extends React.Component {
     renderSummaryScores(report) {
         const summary = report?.testEvaluation?.summary?.agents;
         if (!summary) return null;
+        const agentTypes = this.getActiveAgentTypes();
 
         return (
             <Box mt={2}>
@@ -428,7 +502,7 @@ class CurriculumAgentLab extends React.Component {
                         </TableRow>
                     </TableHead>
                     <TableBody>
-                        {ALL_AGENT_TYPES.map((t) => {
+                        {agentTypes.map((t) => {
                             const s = summary[t];
                             if (!s) return null;
                             return (
@@ -458,6 +532,7 @@ class CurriculumAgentLab extends React.Component {
         const { activeAgentTab, activeProblemTab, showProblemDetail } = this.state;
         if (!showProblemDetail || !report?.testEvaluation) return null;
 
+        const agentTypes = this.getActiveAgentTypes();
         const scoreboard = report.testEvaluation.scoreboard || [];
         const row = scoreboard[activeProblemTab];
         if (!row) return null;
@@ -477,7 +552,7 @@ class CurriculumAgentLab extends React.Component {
                     onChange={(_, v) => this.setState({ activeAgentTab: v })}
                     variant="fullWidth"
                 >
-                    {ALL_AGENT_TYPES.map((t) => (
+                    {agentTypes.map((t) => (
                         <Tab
                             key={t}
                             value={t}
@@ -493,7 +568,12 @@ class CurriculumAgentLab extends React.Component {
                     scrollButtons="auto"
                 >
                     {scoreboard.map((r, i) => (
-                        <Tab key={r.problemId} value={i} label={(r.title || r.problemId).slice(0, 24)} />
+                        <Tab
+                            key={r.problemId}
+                            value={i}
+                            label={(r.title || "Untitled problem").slice(0, 36)}
+                            title={`${r.title || r.problemId} (${r.problemId})`}
+                        />
                     ))}
                 </Tabs>
                 <Box mt={2}>
@@ -584,6 +664,8 @@ class CurriculumAgentLab extends React.Component {
                         curriculum, not identical exposure.
                     </Typography>
 
+                    <LLMSettingsPanel browserStorage={this.props.browserStorage} />
+
                     {this.renderSplitOverview(split)}
                     {this.renderTrainBreakdown(split)}
 
@@ -619,6 +701,31 @@ class CurriculumAgentLab extends React.Component {
                             {running && phase === "testing"
                                 ? "Running test set..."
                                 : "Run Test Set Only (use saved agents)"}
+                        </Button>
+                        <Button
+                            variant="contained"
+                            style={{ backgroundColor: "#e65100", color: "#fff" }}
+                            startIcon={<PlayArrowIcon />}
+                            onClick={this.runLocalLLMPipeline}
+                            disabled={running || !split?.stats?.trainCount}
+                        >
+                            {running &&
+                            phase === "training" &&
+                            this.state.pipelineAgentTypes?.length === 1
+                                ? "Training local GPT-OSS..."
+                                : "Train Local GPT-OSS & Run Test Set"}
+                        </Button>
+                        <Button
+                            variant="outlined"
+                            style={{ borderColor: "#e65100", color: "#e65100" }}
+                            onClick={this.runLocalLLMTestOnly}
+                            disabled={running || !split?.stats?.testCount}
+                        >
+                            {running &&
+                            phase === "testing" &&
+                            this.state.pipelineAgentTypes?.length === 1
+                                ? "Testing local GPT-OSS..."
+                                : "Local GPT-OSS Test Only"}
                         </Button>
                         <Button
                             variant="outlined"

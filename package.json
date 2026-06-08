@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "description": "Propositional Interpretability XAI based on OATutor",
-  "engines": { 
-    "node": ">=12" 
+  "engines": {
+    "node": ">=12"
   },
   "dependencies": {
     "@common/global-config": "file:./common",
@@ -23,6 +23,7 @@
     "list-react-files": "~0.2.0",
     "localforage": "~1.10.0",
     "mathlive": "^0.98.3",
+    "openai": "^6.42.0",
     "random-seed": "~0.3.0",
     "react": "~16.14.0",
     "react-cursor-position": "~3.0.3",

@@ -1,7 +1,9 @@
 import MemoryAgent from "./MemoryAgent.js";
 import RLAgent from "./RLAgent.js";
 import LLMAgent from "./LLMAgent.js";
+import LocalReasoningLLMAgent from "./LocalReasoningLLMAgent.js";
 import { AGENT_TYPES, ALL_AGENT_TYPES } from "./agentTypes.js";
+import { getLLMSettingsSync } from "./llm/llmSettings.js";
 import { cloneBktParams, restoreBktParams } from "./bktSnapshot.js";
 import { filterProblemsForLesson } from "./problemSelection.js";
 import { buildComparisonReport } from "./agentComparison.js";
@@ -12,6 +14,7 @@ const AGENT_FACTORY = {
     [AGENT_TYPES.MEMORY]: MemoryAgent,
     [AGENT_TYPES.RL]: RLAgent,
     [AGENT_TYPES.LLM]: LLMAgent,
+    [AGENT_TYPES.LOCAL_LLM]: LocalReasoningLLMAgent,
 };
 
 export default class AgentOrchestrator {
@@ -48,7 +51,7 @@ export default class AgentOrchestrator {
         const AgentClass = AGENT_FACTORY[agentType];
         if (!AgentClass) throw new Error(`Unknown agent type: ${agentType}`);
 
-        return new AgentClass({
+        const options = {
             lesson: this.lesson,
             problems: this.problems,
             bktParams: bktParamsOverride || this.bktParams,
@@ -58,7 +61,11 @@ export default class AgentOrchestrator {
             onEvent: (event) => this.onEvent({ ...event, agentType }),
             onMasteryUpdate: this.onMasteryUpdate,
             stepDelayMs: this.stepDelayMs,
-        });
+        };
+        if (agentType === AGENT_TYPES.LOCAL_LLM) {
+            options.llmSettings = getLLMSettingsSync();
+        }
+        return new AgentClass(options);
     }
 
     async runAgent(agentType, { maxProblems = 30, isolatedBkt = false } = {}) {
@@ -177,4 +184,4 @@ export default class AgentOrchestrator {
     }
 }
 
-export { MemoryAgent, RLAgent, LLMAgent };
+export { MemoryAgent, RLAgent, LLMAgent, LocalReasoningLLMAgent };

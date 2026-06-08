@@ -26,6 +26,7 @@ export default class CrossLessonOrchestrator {
         onEvent = () => {},
         stepDelayMs = 200,
         testRatio = 0.2,
+        agentTypes = ALL_AGENT_TYPES,
     }) {
         this.course = course;
         this.lessons = lessons;
@@ -37,6 +38,7 @@ export default class CrossLessonOrchestrator {
         this.browserStorage = browserStorage;
         this.onEvent = onEvent;
         this.stepDelayMs = stepDelayMs;
+        this.agentTypes = agentTypes;
         this.cancelled = false;
         this.split = buildCurriculumSplit(problems, lessons, skillModel, { testRatio });
     }
@@ -107,7 +109,7 @@ export default class CrossLessonOrchestrator {
     async _runTrainingPhase() {
         const trainingLog = [];
 
-        for (const agentType of ALL_AGENT_TYPES) {
+        for (const agentType of this.agentTypes) {
             if (this.cancelled) break;
 
             this.onEvent({ type: "curriculum-agent-train-start", agentType });
@@ -216,10 +218,10 @@ export default class CrossLessonOrchestrator {
         this.onEvent({
             type: "curriculum-test-start",
             testCount: this.split.testProblems.length,
-            agents: ALL_AGENT_TYPES,
+            agents: this.agentTypes,
         });
 
-        for (const agentType of ALL_AGENT_TYPES) {
+        for (const agentType of this.agentTypes) {
             if (this.cancelled) break;
 
             restoreBktParams(this.bktParams, cloneBktParams(initialBkt));
@@ -278,7 +280,7 @@ export default class CrossLessonOrchestrator {
                 lessonTopics: p.lessonTopics,
                 agents: {},
             };
-            ALL_AGENT_TYPES.forEach((type) => {
+            this.agentTypes.forEach((type) => {
                 const r = problemResults.find(
                     (x) => x.agentType === type && x.problemId === p.id
                 );
@@ -299,7 +301,7 @@ export default class CrossLessonOrchestrator {
         evaluation.summary = {
             testProblemCount: this.split.testProblems.length,
             agents: Object.fromEntries(
-                ALL_AGENT_TYPES.map((type) => {
+                this.agentTypes.map((type) => {
                     const results = problemResults.filter((r) => r.agentType === type);
                     return [
                         type,
