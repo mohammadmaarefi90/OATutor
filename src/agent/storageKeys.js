@@ -9,6 +9,12 @@ export const AGENT_REASONING_STORAGE_KEY = (lessonId, agentType) =>
     `oatutor-agent-reasoning-${agentType}-${lessonId}`;
 export const AGENT_BELIEFS_STORAGE_KEY = (lessonId, agentType = "local-llm") =>
     `oatutor-agent-beliefs-${agentType}-${lessonId}`;
+export const AGENT_PROP_BKT_STORAGE_KEY = (lessonId, agentType = "local-llm-prop-bkt") =>
+    `oatutor-agent-prop-bkt-${agentType}-${lessonId}`;
+export const AGENT_CHAIN_REASONING_STORAGE_KEY = (lessonId, agentType = "local-llm-prop-chain-bkt") =>
+    `oatutor-agent-chain-reasoning-${agentType}-${lessonId}`;
+export const AGENT_PYBKT_ROSTER_STORAGE_KEY = (lessonId, agentType = "local-llm") =>
+    `oatutor-agent-pybkt-roster-${agentType}-${lessonId}`;
 export const AGENT_COMPARISON_STORAGE_KEY = (lessonId) => `oatutor-agent-comparison-${lessonId}`;
 export const AGENT_EVALUATION_STORAGE_KEY = (lessonId) => `oatutor-agent-evaluation-${lessonId}`;
 export const AGENT_CURRICULUM_REPORT_STORAGE_KEY = (courseName) =>

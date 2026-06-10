@@ -179,20 +179,24 @@ export default class RLAgent extends BaseAgent {
             attempt = this.stepMemory[step.id];
             firstTry = true;
             this._recordReasoningAction("rl-recall", attempt?.slice(0, 40));
-        } else if (action === ACTIONS.USE_HINT) {
+        } else if (action === ACTIONS.USE_HINT && this._shouldAllowHints()) {
             this._traceHintPathway(step);
             attempt = await this._learnFromHints(step, problem, seed, run);
             hintsUsed = this._resolveHintPathway(step).length;
             this._recordReasoningAction("rl-use-hint", `${hintsUsed} hints`);
+        } else if (action === ACTIONS.USE_HINT) {
+            this._recordReasoningAction("rl-use-hint-blocked", "strict no-clue");
         } else {
-            attempt = this.stepMemory[step.id] || step.stepAnswer?.[0];
+            attempt =
+                this.stepMemory[step.id] ||
+                (this._strictNoClues ? null : step.stepAnswer?.[0]);
             if (this.stepMemory[step.id]) firstTry = true;
             this._recordReasoningAction("rl-submit-best", attempt?.slice(0, 40));
         }
 
         let isCorrect = attempt ? this._checkStepAnswer(step, attempt, seed) : false;
 
-        if (!isCorrect && action !== ACTIONS.USE_HINT) {
+        if (!isCorrect && action !== ACTIONS.USE_HINT && this._shouldAllowHints()) {
             this._traceHintPathway(step);
             attempt = await this._learnFromHints(step, problem, seed, run);
             hintsUsed += this._resolveHintPathway(step).length;

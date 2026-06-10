@@ -1,19 +1,46 @@
 function formatTimelineEvent(event) {
     switch (event.type) {
         case "step-start":
-            return "Started step";
+            return "The agent began working on this step.";
         case "recall":
-            return `Recalled answer: "${truncate(event.attempt)}" → ${event.isCorrect ? "correct" : "wrong"} (confidence ${Math.round((event.confidence || 0) * 100)}%)`;
+            return `From memory, the agent tried "${truncate(event.attempt)}" — that was ${
+                event.isCorrect ? "correct" : "incorrect"
+            } (${Math.round((event.confidence || 0) * 100)}% confidence).`;
         case "learn":
-            return `Read ${event.hintsReviewed || 0} hint(s) from pathway`;
+            return `The agent read ${event.hintsReviewed || 0} tutoring hint(s) for this step.`;
         case "rl-action":
-            return `RL chose action: ${event.action} (state: ${event.state})`;
+            return `The reinforcement-learning agent chose the action "${event.action}" (internal state: ${event.state}).`;
         case "llm-response":
-            return `LLM answered: "${truncate(event.attempt)}"`;
+            return `The language model answered "${truncate(event.attempt)}".`;
         case "llm-error":
-            return `LLM error: ${event.message || "unknown"}`;
+            return `The language model call failed: ${event.message || "unknown error"}.`;
+        case "prop-policy":
+            return event.primarySuggestion?.text
+                ? `The agent focused on this idea: "${truncate(event.primarySuggestion.text)}"`
+                : "The agent ranked tutoring ideas for this step using proposition beliefs.";
+        case "prop-chain-candidates":
+            return `The agent ranked ${event.chains?.length || 0} reasoning chain(s)${
+                event.strictNoClues ? " (strict no-clue test)" : ""
+            }.`;
+        case "prop-chain-tree-candidates":
+            return (
+                event.treeSummary ||
+                `Beam tree ranked ${event.chains?.length || 0} chain branch(es)${
+                    event.strictNoClues ? " (strict no-clue test)" : ""
+                }.`
+            );
+        case "prop-chain-eval":
+            return event.evalSummary || `Chain evaluation: ${event.reachedConclusion ? "reached conclusion" : "did not reach conclusion"}.`;
+        case "prop-chain-learned":
+            return `Learned a reasoning chain from hints (${event.chainKey || "path"}).`;
+        case "hint-retrieval":
+            return `Hints were selected using the "${event.hintRetrievalLabel || event.hintRetrievalMode || "default"}" retrieval policy.`;
         case "step-complete":
-            return `Submitted: "${truncate(event.attempt)}" → ${event.isCorrect ? "✓ correct" : "✗ incorrect"}${event.firstTry ? " (first try)" : ""}${event.reward != null ? ` [r=${event.reward}]` : ""}${event.source ? ` via ${event.source}` : ""}`;
+            return `The agent submitted "${truncate(event.attempt)}" — ${
+                event.isCorrect ? "correct" : "incorrect"
+            }${event.firstTry ? " on the first try" : " after using hints"}${
+                event.source ? ` (via ${event.source})` : ""
+            }.`;
         default:
             return event.type;
     }
@@ -28,6 +55,8 @@ function truncate(text, len = 80) {
 export function buildSolveTrace(problem, run, sessionReasoning = null) {
     if (!problem?.steps) return null;
 
+    const runStrictNoClues = run?.strictNoClues ?? null;
+
     return {
         problemId: problem.id,
         title: problem.title,
@@ -37,6 +66,12 @@ export function buildSolveTrace(problem, run, sessionReasoning = null) {
             const trace = sessionReasoning?.stepTraces?.find((t) => t.stepId === step.id);
             const complete = stepEvents.find((e) => e.type === "step-complete");
             const llmResponse = stepEvents.find((e) => e.type === "llm-response");
+            const propPolicyEvent = stepEvents.find((e) => e.type === "prop-policy");
+            const chainCandidatesEvent =
+                stepEvents.find((e) => e.type === "prop-chain-tree-candidates") ||
+                stepEvents.find((e) => e.type === "prop-chain-candidates");
+            const chainEvalEvents = stepEvents.filter((e) => e.type === "prop-chain-eval");
+            const hintRetrievalEvent = stepEvents.find((e) => e.type === "hint-retrieval");
 
             return {
                 stepIndex: index + 1,
@@ -67,6 +102,27 @@ export function buildSolveTrace(problem, run, sessionReasoning = null) {
                           provider: llmResponse.provider,
                       }
                     : null,
+                propBeliefDeltas: complete?.propBeliefDeltas || null,
+                propPolicySuggestion:
+                    complete?.propPolicySuggestion || propPolicyEvent?.primarySuggestion || null,
+                policyVersion: complete?.policyVersion || null,
+                hintRetrievalMode:
+                    complete?.hintRetrievalMode || hintRetrievalEvent?.hintRetrievalMode || null,
+                hintRetrievalLabel:
+                    complete?.hintRetrievalLabel || hintRetrievalEvent?.hintRetrievalLabel || null,
+                bktMode: complete?.bktMode || null,
+                strictNoClues:
+                    complete?.strictNoClues ??
+                    chainCandidatesEvent?.strictNoClues ??
+                    runStrictNoClues,
+                chainUsed: complete?.chainUsed || null,
+                chainCandidates: complete?.chainCandidates ?? chainCandidatesEvent?.chains?.length ?? null,
+                chainTreeMeta: chainCandidatesEvent?.treeMeta || null,
+                chainsTried: complete?.chainsTried || chainEvalEvents.map((e) => ({
+                    key: e.chainKey,
+                    score: e.chainScore,
+                    reachedConclusion: e.reachedConclusion,
+                })),
             };
         }),
     };

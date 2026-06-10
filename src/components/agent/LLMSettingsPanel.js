@@ -19,9 +19,17 @@ import ExpandLessIcon from "@material-ui/icons/ExpandLess";
 import {
     DEFAULT_LLM_SETTINGS,
     LLM_PROVIDER,
+    SKILL_HINT_MODES,
+    PROP_HINT_MODES,
+    SKILL_BKT_BACKEND,
     loadLLMSettings,
     saveLLMSettings,
 } from "../../agent/llm/llmSettings.js";
+import { probePyBktServer } from "../../agent/llm/pyBKTClient.js";
+import {
+    SKILL_HINT_MODE_META,
+    PROP_HINT_MODE_META,
+} from "../../agent/llm/beliefRetrieval.js";
 import { probeLocalLLMServer, resetOpenAIClient } from "../../agent/llm/llmClient.js";
 
 class LLMSettingsPanel extends React.Component {
@@ -32,6 +40,8 @@ class LLMSettingsPanel extends React.Component {
             settings: { ...DEFAULT_LLM_SETTINGS },
             probeStatus: null,
             probing: false,
+            pyBktProbeStatus: null,
+            pyBktProbing: false,
             savedMessage: null,
         };
     }
@@ -80,6 +90,18 @@ class LLMSettingsPanel extends React.Component {
         this.setState({ settings: { ...DEFAULT_LLM_SETTINGS }, savedMessage: null });
     };
 
+    handlePyBktProbe = async () => {
+        const { settings } = this.state;
+        this.setState({ pyBktProbing: true, pyBktProbeStatus: null });
+        const result = await probePyBktServer(settings);
+        this.setState({
+            pyBktProbing: false,
+            pyBktProbeStatus: result.ok
+                ? { ok: true, text: result.message }
+                : { ok: false, text: `${result.message}. ${result.hint || ""}` },
+        });
+    };
+
     handleProbe = async () => {
         const { settings } = this.state;
         this.setState({ probing: true, probeStatus: null });
@@ -94,7 +116,8 @@ class LLMSettingsPanel extends React.Component {
 
     render() {
         const { compact } = this.props;
-        const { open, settings, probeStatus, probing, savedMessage } = this.state;
+        const { open, settings, probeStatus, probing, pyBktProbeStatus, pyBktProbing, savedMessage } =
+            this.state;
 
         return (
             <Paper variant="outlined" style={{ padding: compact ? 12 : 16, marginBottom: 16 }}>
@@ -210,6 +233,101 @@ class LLMSettingsPanel extends React.Component {
                                         helperText="Training hints injected per step"
                                     />
                                 </Grid>
+
+                                <Grid item xs={12} sm={6}>
+                                    <FormControl fullWidth variant="outlined" size="small">
+                                        <InputLabel>Skill BKT backend (GPT-OSS only)</InputLabel>
+                                        <Select
+                                            value={
+                                                settings.skillBktBackend ||
+                                                SKILL_BKT_BACKEND.CLASSIC
+                                            }
+                                            onChange={this.handleChange("skillBktBackend")}
+                                            label="Skill BKT backend (GPT-OSS only)"
+                                        >
+                                            <MenuItem value={SKILL_BKT_BACKEND.CLASSIC}>
+                                                Classic (in-browser BKT-brain)
+                                            </MenuItem>
+                                            <MenuItem value={SKILL_BKT_BACKEND.PYBKT}>
+                                                pyBKT (local CAHLR server)
+                                            </MenuItem>
+                                        </Select>
+                                        <Typography variant="caption" color="textSecondary">
+                                            pyBKT uses{" "}
+                                            <code>./scripts/serve-pybkt.sh</code> on port 8090.
+                                            Prop BKT agent unchanged.
+                                        </Typography>
+                                    </FormControl>
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <TextField
+                                        fullWidth
+                                        size="small"
+                                        variant="outlined"
+                                        label="pyBKT service URL"
+                                        value={settings.pyBktBaseUrl || "http://127.0.0.1:8090"}
+                                        onChange={this.handleChange("pyBktBaseUrl")}
+                                        disabled={
+                                            settings.skillBktBackend !== SKILL_BKT_BACKEND.PYBKT
+                                        }
+                                    />
+                                </Grid>
+
+                                <Grid item xs={12}>
+                                    <Typography variant="subtitle2" style={{ marginTop: 4 }}>
+                                        Hint retrieval mode (compare strategies)
+                                    </Typography>
+                                    <Typography variant="caption" color="textSecondary" display="block">
+                                        Choose how hints are picked for the LLM prompt. Run the same
+                                        evaluation with different modes to see which performs better.
+                                    </Typography>
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <FormControl fullWidth variant="outlined" size="small">
+                                        <InputLabel>GPT-OSS (skill BKT)</InputLabel>
+                                        <Select
+                                            value={
+                                                settings.skillHintRetrieval ||
+                                                SKILL_HINT_MODES.RECENCY
+                                            }
+                                            onChange={this.handleChange("skillHintRetrieval")}
+                                            label="GPT-OSS (skill BKT)"
+                                        >
+                                            {Object.values(SKILL_HINT_MODES).map((mode) => (
+                                                <MenuItem key={mode} value={mode}>
+                                                    {SKILL_HINT_MODE_META[mode]?.label || mode}
+                                                </MenuItem>
+                                            ))}
+                                        </Select>
+                                        <Typography variant="caption" color="textSecondary">
+                                            {SKILL_HINT_MODE_META[settings.skillHintRetrieval]
+                                                ?.description || ""}
+                                        </Typography>
+                                    </FormControl>
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <FormControl fullWidth variant="outlined" size="small">
+                                        <InputLabel>Prop BKT agent</InputLabel>
+                                        <Select
+                                            value={
+                                                settings.propHintRetrieval ||
+                                                PROP_HINT_MODES.RELEVANCE
+                                            }
+                                            onChange={this.handleChange("propHintRetrieval")}
+                                            label="Prop BKT agent"
+                                        >
+                                            {Object.values(PROP_HINT_MODES).map((mode) => (
+                                                <MenuItem key={mode} value={mode}>
+                                                    {PROP_HINT_MODE_META[mode]?.label || mode}
+                                                </MenuItem>
+                                            ))}
+                                        </Select>
+                                        <Typography variant="caption" color="textSecondary">
+                                            {PROP_HINT_MODE_META[settings.propHintRetrieval]
+                                                ?.description || ""}
+                                        </Typography>
+                                    </FormControl>
+                                </Grid>
                             </>
                         )}
                     </Grid>
@@ -228,7 +346,17 @@ class LLMSettingsPanel extends React.Component {
                                 onClick={this.handleProbe}
                                 disabled={probing}
                             >
-                                {probing ? "Testing..." : "Test connection"}
+                                {probing ? "Testing..." : "Test LLM connection"}
+                            </Button>
+                        )}
+                        {settings.skillBktBackend === SKILL_BKT_BACKEND.PYBKT && (
+                            <Button
+                                variant="outlined"
+                                size="small"
+                                onClick={this.handlePyBktProbe}
+                                disabled={pyBktProbing}
+                            >
+                                {pyBktProbing ? "Testing..." : "Test pyBKT service"}
                             </Button>
                         )}
                         {probeStatus && (
@@ -237,6 +365,15 @@ class LLMSettingsPanel extends React.Component {
                                 label={probeStatus.text}
                                 style={{
                                     backgroundColor: probeStatus.ok ? "#e8f5e9" : "#ffebee",
+                                }}
+                            />
+                        )}
+                        {pyBktProbeStatus && (
+                            <Chip
+                                size="small"
+                                label={pyBktProbeStatus.text}
+                                style={{
+                                    backgroundColor: pyBktProbeStatus.ok ? "#e8f5e9" : "#ffebee",
                                 }}
                             />
                         )}

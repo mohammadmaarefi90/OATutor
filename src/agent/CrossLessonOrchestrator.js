@@ -1,6 +1,6 @@
 import AgentOrchestrator from "./AgentOrchestrator.js";
 import { ALL_AGENT_TYPES, AGENT_META } from "./agentTypes.js";
-import { buildCurriculumSplit } from "./curriculumSplit.js";
+import { buildCurriculumSplit, SPLIT_MODES } from "./curriculumSplit.js";
 import { buildEvaluationReport } from "./AgentEvaluator.js";
 import { buildStorableCurriculumReport } from "./curriculumReportExport.js";
 import { cloneBktParams, restoreBktParams } from "./bktSnapshot.js";
@@ -8,6 +8,12 @@ import {
     AGENT_CURRICULUM_REPORT_STORAGE_KEY,
     AGENT_CURRICULUM_CHECKPOINT_KEY,
 } from "./storageKeys.js";
+import {
+    buildCheckpointRecord,
+    buildTrainingUnits,
+    canResumeCheckpoint,
+    CHECKPOINT_STATUS,
+} from "./curriculumCheckpoint.js";
 
 /**
  * Trains all three agents across every lesson in a course (train split only),
@@ -26,6 +32,7 @@ export default class CrossLessonOrchestrator {
         onEvent = () => {},
         stepDelayMs = 200,
         testRatio = 0.2,
+        splitOptions = null,
         agentTypes = ALL_AGENT_TYPES,
     }) {
         this.course = course;
@@ -40,7 +47,17 @@ export default class CrossLessonOrchestrator {
         this.stepDelayMs = stepDelayMs;
         this.agentTypes = agentTypes;
         this.cancelled = false;
-        this.split = buildCurriculumSplit(problems, lessons, skillModel, { testRatio });
+        this.splitOptions = splitOptions || {
+            mode: SPLIT_MODES.HOLDOUT_RATIO,
+            testRatio,
+            seed: "oatutor-curriculum",
+        };
+        this.split = buildCurriculumSplit(problems, lessons, skillModel, this.splitOptions);
+        this._trainingUnits = buildTrainingUnits(
+            agentTypes,
+            lessons,
+            this.split.trainByLesson
+        );
     }
 
     cancel() {
@@ -52,6 +69,7 @@ export default class CrossLessonOrchestrator {
         return new AgentOrchestrator({
             lesson,
             problems: this.problems,
+            skillModel: this.skillModel,
             bktParams: this.bktParams,
             heuristic: this.heuristic,
             hintPathway: this.hintPathway,
@@ -61,19 +79,69 @@ export default class CrossLessonOrchestrator {
         });
     }
 
+    _splitSnapshot() {
+        return {
+            mode: this.split.mode,
+            seed: this.split.seed,
+            testRatio: this.split.testRatio,
+            testPerLesson: this.split.testPerLesson,
+            stats: this.split.stats,
+            trainByLesson: this.split.trainByLesson,
+            testProblemIds: this.split.testProblemIds,
+        };
+    }
+
+    _emitTrainingProgress(completedUnits, currentLabel = null) {
+        const progress = buildCheckpointRecord({
+            courseName: this.course.courseName,
+            status: CHECKPOINT_STATUS.IN_PROGRESS,
+            agentTypes: this.agentTypes,
+            split: this.split,
+            splitOptions: this.splitOptions,
+            units: this._trainingUnits,
+            completedUnits,
+        }).progress;
+
+        this.onEvent({
+            type: "curriculum-progress",
+            phase: "training",
+            progress,
+            currentLabel,
+        });
+    }
+
+    async _persistTrainingCheckpoint({
+        status,
+        completedUnits,
+        trainingLog,
+        startedAt = null,
+        trainingCompletedAt = null,
+    }) {
+        const checkpoint = buildCheckpointRecord({
+            courseName: this.course.courseName,
+            status,
+            agentTypes: this.agentTypes,
+            split: this.split,
+            splitOptions: this.splitOptions,
+            units: this._trainingUnits,
+            completedUnits,
+            trainingLog,
+            startedAt,
+            trainingCompletedAt,
+        });
+
+        await this._saveCheckpoint(checkpoint);
+        this.onEvent({ type: "curriculum-checkpoint-saved", checkpoint });
+        return checkpoint;
+    }
+
     _buildReportSkeleton(testEvaluation, trainingLog = [], extra = {}) {
         return {
             reportId: extra.reportId || `curriculum-${Date.now()}`,
             timestamp: Date.now(),
             trainingCompletedAt: extra.trainingCompletedAt || null,
             courseName: this.course.courseName,
-            split: {
-                seed: this.split.seed,
-                testRatio: this.split.testRatio,
-                stats: this.split.stats,
-                trainByLesson: this.split.trainByLesson,
-                testProblemIds: this.split.testProblemIds,
-            },
+            split: this._splitSnapshot(),
             testProblems: this.split.testProblems.map((p) => ({
                 id: p.id,
                 title: p.title,
@@ -84,6 +152,8 @@ export default class CrossLessonOrchestrator {
             })),
             trainingLog,
             testEvaluation,
+            interrupted: extra.interrupted || false,
+            resumedFromCheckpoint: extra.resumedFromCheckpoint || false,
             ...extra,
         };
     }
@@ -106,87 +176,181 @@ export default class CrossLessonOrchestrator {
             .catch((err) => console.error("Failed to save curriculum checkpoint", err));
     }
 
-    async _runTrainingPhase() {
-        const trainingLog = [];
+    async _runTrainingPhase({ resumeCheckpoint = null } = {}) {
+        const completedSet = new Set(resumeCheckpoint?.completedUnits || []);
+        const trainingLog = [...(resumeCheckpoint?.trainingLog || [])];
+        const startedAt = resumeCheckpoint?.startedAt || Date.now();
+        let lastCheckpoint = resumeCheckpoint;
 
-        for (const agentType of this.agentTypes) {
+        if (!resumeCheckpoint) {
+            lastCheckpoint = await this._persistTrainingCheckpoint({
+                status: CHECKPOINT_STATUS.IN_PROGRESS,
+                completedUnits: [],
+                trainingLog: [],
+                startedAt,
+            });
+        }
+
+        this._emitTrainingProgress([...completedSet]);
+
+        for (const unit of this._trainingUnits) {
             if (this.cancelled) break;
+            if (completedSet.has(unit.key)) continue;
 
-            this.onEvent({ type: "curriculum-agent-train-start", agentType });
+            const lesson = this.lessons.find((l) => l.id === unit.lessonId);
+            if (!lesson) continue;
 
-            for (const lesson of this.lessons) {
-                if (this.cancelled) break;
+            const label = `${AGENT_META[unit.agentType]?.shortLabel || unit.agentType} — ${
+                unit.lessonTopics || unit.lessonName || unit.lessonId
+            }`;
 
-                const trainIds = this.split.trainByLesson[lesson.id]?.train || [];
-                if (trainIds.length === 0) continue;
+            this.onEvent({
+                type: "curriculum-agent-train-start",
+                agentType: unit.agentType,
+            });
+            this.onEvent({
+                type: "curriculum-lesson-train-start",
+                agentType: unit.agentType,
+                lessonId: unit.lessonId,
+                lessonTopics: unit.lessonTopics,
+                problemCount: unit.trainIds.length,
+            });
+            this._emitTrainingProgress([...completedSet], label);
 
-                this.onEvent({
-                    type: "curriculum-lesson-train-start",
-                    agentType,
-                    lessonId: lesson.id,
-                    lessonTopics: lesson.topics,
-                    problemCount: trainIds.length,
+            this._activeOrch = this._orchForLesson(lesson);
+            const agent = this._activeOrch.createAgent(unit.agentType, this.bktParams);
+            await agent.loadPersistedState?.();
+
+            try {
+                const output = await agent.runTrainingOnProblemIds(unit.trainIds);
+                trainingLog.push({
+                    agentType: unit.agentType,
+                    lessonId: unit.lessonId,
+                    problemIds: unit.trainIds,
+                    output,
                 });
-
-                this._activeOrch = this._orchForLesson(lesson);
-                const agent = this._activeOrch.createAgent(agentType, this.bktParams);
-                await agent.loadPersistedState?.();
-
-                try {
-                    const output = await agent.runTrainingOnProblemIds(trainIds);
-                    trainingLog.push({
-                        agentType,
-                        lessonId: lesson.id,
-                        problemIds: trainIds,
-                        output,
-                    });
-                } catch (err) {
-                    trainingLog.push({
-                        agentType,
-                        lessonId: lesson.id,
-                        error: err.message,
-                    });
-                }
-
-                this._activeOrch = null;
-                this.onEvent({
-                    type: "curriculum-lesson-train-end",
-                    agentType,
-                    lessonId: lesson.id,
+            } catch (err) {
+                trainingLog.push({
+                    agentType: unit.agentType,
+                    lessonId: unit.lessonId,
+                    error: err.message,
                 });
             }
 
-            this.onEvent({ type: "curriculum-agent-train-end", agentType });
+            this._activeOrch = null;
+            completedSet.add(unit.key);
+
+            this.onEvent({
+                type: "curriculum-lesson-train-end",
+                agentType: unit.agentType,
+                lessonId: unit.lessonId,
+            });
+            this.onEvent({
+                type: "curriculum-agent-train-end",
+                agentType: unit.agentType,
+            });
+
+            const status = this.cancelled
+                ? CHECKPOINT_STATUS.INTERRUPTED
+                : CHECKPOINT_STATUS.IN_PROGRESS;
+
+            lastCheckpoint = await this._persistTrainingCheckpoint({
+                status,
+                completedUnits: [...completedSet],
+                trainingLog,
+                startedAt,
+            });
+            this._emitTrainingProgress([...completedSet], label);
         }
 
-        return trainingLog;
+        const allDone = completedSet.size >= this._trainingUnits.length;
+
+        if (allDone && !this.cancelled) {
+            lastCheckpoint = await this._persistTrainingCheckpoint({
+                status: CHECKPOINT_STATUS.TRAINING_COMPLETE,
+                completedUnits: [...completedSet],
+                trainingLog,
+                startedAt,
+                trainingCompletedAt: Date.now(),
+            });
+        } else if (this.cancelled && !allDone) {
+            lastCheckpoint = await this._persistTrainingCheckpoint({
+                status: CHECKPOINT_STATUS.INTERRUPTED,
+                completedUnits: [...completedSet],
+                trainingLog,
+                startedAt,
+            });
+            this.onEvent({
+                type: "curriculum-interrupted",
+                checkpoint: lastCheckpoint,
+            });
+        }
+
+        return { trainingLog, checkpoint: lastCheckpoint, allDone: allDone && !this.cancelled };
     }
 
-    async runFullPipeline() {
+    async runFullPipeline({ resume = false } = {}) {
+        let resumeCheckpoint = null;
+        if (resume && this.browserStorage) {
+            resumeCheckpoint = await loadCurriculumCheckpoint(
+                this.browserStorage,
+                this.course.courseName
+            );
+            if (
+                !canResumeCheckpoint(resumeCheckpoint, {
+                    agentTypes: this.agentTypes,
+                    split: this.split,
+                })
+            ) {
+                const err = new Error(
+                    "No compatible checkpoint found. Start a fresh run or match the same split mode and agents."
+                );
+                this.onEvent({ type: "curriculum-resume-error", message: err.message });
+                throw err;
+            }
+        }
+
         this.onEvent({
             type: "curriculum-start",
             split: this.split.stats,
+            splitMode: this.split.mode,
             testCount: this.split.testProblems.length,
+            resumed: !!resumeCheckpoint,
+            progress: resumeCheckpoint?.progress || null,
         });
 
-        const trainingLog = await this._runTrainingPhase();
+        const { trainingLog, allDone, checkpoint } = await this._runTrainingPhase({
+            resumeCheckpoint,
+        });
+
+        if (!allDone) {
+            const partial = this._buildReportSkeleton(null, trainingLog, {
+                trainingCompletedAt: checkpoint?.trainingCompletedAt || null,
+                interrupted: true,
+                resumedFromCheckpoint: !!resumeCheckpoint,
+                checkpoint,
+            });
+            this.onEvent({
+                type: "curriculum-training-paused",
+                checkpoint,
+                report: buildStorableCurriculumReport(partial),
+            });
+            return partial;
+        }
+
         const trainingCompletedAt = Date.now();
-
-        await this._saveCheckpoint({
-            courseName: this.course.courseName,
-            trainingCompletedAt,
-            split: {
-                seed: this.split.seed,
-                testRatio: this.split.testRatio,
-                stats: this.split.stats,
-                trainByLesson: this.split.trainByLesson,
-                testProblemIds: this.split.testProblemIds,
-            },
-        });
-
         const testReport = await this.runTestEvaluation();
         const report = this._buildReportSkeleton(testReport, trainingLog, {
             trainingCompletedAt,
+            resumedFromCheckpoint: !!resumeCheckpoint,
+        });
+
+        await this._persistTrainingCheckpoint({
+            status: CHECKPOINT_STATUS.COMPLETE,
+            completedUnits: checkpoint?.completedUnits || [],
+            trainingLog,
+            startedAt: checkpoint?.startedAt,
+            trainingCompletedAt,
         });
 
         await this._saveReport(report);
@@ -194,16 +358,22 @@ export default class CrossLessonOrchestrator {
         return report;
     }
 
-    async runTestOnly() {
+    async resumeTraining() {
+        return this.runFullPipeline({ resume: true });
+    }
+
+    async runTestOnly({ strictNoClues = false } = {}) {
         this.onEvent({
             type: "curriculum-test-only-start",
             testCount: this.split.testProblems.length,
+            strictNoClues,
         });
 
-        const testReport = await this.runTestEvaluation();
+        const testReport = await this.runTestEvaluation({ strictNoClues });
         const report = this._buildReportSkeleton(testReport, [], {
             reportId: `curriculum-test-${Date.now()}`,
             testOnly: true,
+            strictNoClues,
         });
 
         await this._saveReport(report);
@@ -211,14 +381,17 @@ export default class CrossLessonOrchestrator {
         return report;
     }
 
-    async runTestEvaluation() {
+    async runTestEvaluation({ strictNoClues = false } = {}) {
         const initialBkt = cloneBktParams(this.bktParams);
         const problemResults = [];
+        const totalTests = this.split.testProblems.length * this.agentTypes.length;
+        let completedTests = 0;
 
         this.onEvent({
             type: "curriculum-test-start",
             testCount: this.split.testProblems.length,
             agents: this.agentTypes,
+            strictNoClues,
         });
 
         for (const agentType of this.agentTypes) {
@@ -239,15 +412,21 @@ export default class CrossLessonOrchestrator {
                 agent.stepDelayMs = 400;
                 await agent.loadPersistedState?.();
 
+                const label = `${AGENT_META[agentType]?.shortLabel || agentType} — ${
+                    testProblem.title || testProblem.id
+                }`;
+
                 try {
                     const result = await agent.evaluateProblem(testProblem, {
                         persistLearning: false,
+                        strictNoClues,
                     });
                     problemResults.push({
                         ...result,
                         lessonId: testProblem.lessonId,
                         lessonTopics: testProblem.lessonTopics,
                         isTestSet: true,
+                        strictNoClues,
                     });
                 } catch (err) {
                     problemResults.push({
@@ -260,6 +439,23 @@ export default class CrossLessonOrchestrator {
                     });
                 }
 
+                completedTests += 1;
+                this.onEvent({
+                    type: "curriculum-progress",
+                    phase: "testing",
+                    progress: {
+                        completedUnits: completedTests,
+                        totalUnits: totalTests,
+                        percent: Math.round((completedTests / Math.max(totalTests, 1)) * 100),
+                        completedProblems: completedTests,
+                        totalProblems: totalTests,
+                        problemPercent: Math.round(
+                            (completedTests / Math.max(totalTests, 1)) * 100
+                        ),
+                    },
+                    currentLabel: label,
+                });
+
                 restoreBktParams(this.bktParams, cloneBktParams(initialBkt));
             }
 
@@ -269,8 +465,14 @@ export default class CrossLessonOrchestrator {
         restoreBktParams(this.bktParams, initialBkt);
 
         const evaluation = buildEvaluationReport(problemResults);
-        evaluation.splitType = "curriculum-holdout";
+        evaluation.splitType =
+            this.split.mode === SPLIT_MODES.FULL_TRAIN_STRATIFIED_TEST
+                ? "curriculum-stratified-holdout"
+                : "curriculum-holdout";
+        evaluation.splitMode = this.split.mode;
         evaluation.testProblemIds = this.split.testProblemIds;
+        evaluation.sharedTestSet = true;
+        evaluation.strictNoClues = strictNoClues;
 
         const scoreboard = this.split.testProblems.map((p) => {
             const row = {
@@ -342,3 +544,5 @@ export async function loadCurriculumReport(browserStorage, courseName) {
         .getByKey(AGENT_CURRICULUM_REPORT_STORAGE_KEY(courseName))
         .catch(() => null);
 }
+
+export { canResumeCheckpoint, CHECKPOINT_STATUS };

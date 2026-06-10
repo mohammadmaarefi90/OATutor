@@ -232,7 +232,7 @@ export default class LLMAgent extends BaseAgent {
         let isCorrect = attempt ? this._checkStepAnswer(step, attempt, seed) : false;
         finalAttemptAfter = attempt;
 
-        if (!isCorrect) {
+        if (!isCorrect && this._shouldAllowHints()) {
             firstTry = false;
             this.llmFallbacks += 1;
             usedHints = true;
@@ -242,6 +242,9 @@ export default class LLMAgent extends BaseAgent {
             source = this.llmAvailable ? "llm-fallback-hints" : "hints-no-llm";
             this._recordReasoningAction("hint-fallback", source);
             if (attempt) isCorrect = this._checkStepAnswer(step, attempt, seed);
+        } else if (!isCorrect && this._strictNoClues) {
+            firstTry = false;
+            source = "strict-no-clue";
         }
 
         llmAfter = buildLLMAfterSnapshot({

@@ -5,6 +5,7 @@ import { cleanArray } from "../util/cleanObject.js";
 import { computeLessonMastery, selectNextProblem } from "./problemSelection.js";
 import ReasoningSession, { mergeSessionIntoGraph } from "./ReasoningSession.js";
 import { buildSolveTrace } from "./buildSolveTrace.js";
+import { stripCluesFromProblem } from "./stripProblemClues.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -35,6 +36,11 @@ export default class BaseAgent {
         this.completedProbs = new Set();
         this._currentRun = null;
         this.reasoningSession = null;
+        this._strictNoClues = false;
+    }
+
+    _shouldAllowHints() {
+        return !this._strictNoClues;
     }
 
     cancel() {
@@ -104,6 +110,8 @@ export default class BaseAgent {
     }
 
     async _learnFromHints(step, problem, seed, run) {
+        if (this._strictNoClues) return null;
+
         const pathway = this._resolveHintPathway(step);
         run.hintsConsumed += pathway.length;
         for (const hint of pathway) {
@@ -140,47 +148,60 @@ export default class BaseAgent {
         });
     }
 
-    async evaluateProblem(problem, { persistLearning = true } = {}) {
+    async evaluateProblem(problem, { persistLearning = true, strictNoClues = false } = {}) {
         await this.loadPersistedState?.();
 
-        this.reasoningSession = new ReasoningSession(problem, this.agentType);
+        this._strictNoClues = !!strictNoClues;
+        const evalProblem = strictNoClues ? stripCluesFromProblem(problem) : problem;
+
+        this.reasoningSession = new ReasoningSession(evalProblem, this.agentType);
         const run = this.createRun();
         run.events = [];
+        run.strictNoClues = !!strictNoClues;
         this._currentRun = run;
 
-        this._emit("eval-start", { problemId: problem.id, title: problem.title });
-
-        await this._solveProblem(problem, run);
-
-        const sessionReasoning = this.reasoningSession.toDAG();
-        let reasoningDAG = sessionReasoning;
-
-        if (persistLearning && this.getReasoningGraph) {
-            mergeSessionIntoGraph(this.getReasoningGraph(), this.reasoningSession);
-            reasoningDAG = this.getReasoningGraph().exportDAG();
-            await this.saveReasoningGraph?.();
-        }
-
-        const stepsCorrect = run.stepsCorrectFirstTry + run.stepsCorrectAfterLearning;
-        const solveTrace = buildSolveTrace(problem, run, sessionReasoning);
-        const result = {
-            agentType: this.agentType,
+        this._emit("eval-start", {
             problemId: problem.id,
-            problemTitle: problem.title,
-            run,
-            correct: stepsCorrect === run.stepsTotal && run.stepsTotal > 0,
-            stepsCorrect,
-            stepsTotal: run.stepsTotal,
-            firstTryRate: run.stepsTotal > 0 ? run.stepsCorrectFirstTry / run.stepsTotal : 0,
-            sessionReasoning,
-            reasoningDAG,
-            solveTrace,
-        };
+            title: problem.title,
+            strictNoClues: !!strictNoClues,
+        });
 
-        this._emit("eval-complete", result);
-        this.reasoningSession = null;
-        this._currentRun = null;
-        return result;
+        try {
+            await this._solveProblem(evalProblem, run);
+
+            const sessionReasoning = this.reasoningSession.toDAG();
+            let reasoningDAG = sessionReasoning;
+
+            if (persistLearning && this.getReasoningGraph) {
+                mergeSessionIntoGraph(this.getReasoningGraph(), this.reasoningSession);
+                reasoningDAG = this.getReasoningGraph().exportDAG();
+                await this.saveReasoningGraph?.();
+            }
+
+            const stepsCorrect = run.stepsCorrectFirstTry + run.stepsCorrectAfterLearning;
+            const solveTrace = buildSolveTrace(problem, run, sessionReasoning);
+            const result = {
+                agentType: this.agentType,
+                problemId: problem.id,
+                problemTitle: problem.title,
+                run,
+                correct: stepsCorrect === run.stepsTotal && run.stepsTotal > 0,
+                stepsCorrect,
+                stepsTotal: run.stepsTotal,
+                firstTryRate: run.stepsTotal > 0 ? run.stepsCorrectFirstTry / run.stepsTotal : 0,
+                sessionReasoning,
+                reasoningDAG,
+                solveTrace,
+                strictNoClues: !!strictNoClues,
+            };
+
+            this._emit("eval-complete", result);
+            return result;
+        } finally {
+            this.reasoningSession = null;
+            this._currentRun = null;
+            this._strictNoClues = false;
+        }
     }
 
     async runTrainingOnProblemIds(problemIds) {

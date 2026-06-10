@@ -154,13 +154,16 @@ export default class MemoryAgent extends BaseAgent {
             });
         }
 
-        if (!isCorrect) {
+        if (!isCorrect && this._shouldAllowHints()) {
             firstTry = false;
             this._recordReasoningAction("recall-failed", "consulting hints");
             attempt = await this._learnFromStep(step, problem, seed, run);
             if (attempt) {
                 isCorrect = this._checkStepAnswer(step, attempt, seed);
             }
+        } else if (!isCorrect && this._strictNoClues) {
+            firstTry = false;
+            this._recordReasoningAction("recall-failed", "strict no-clue — no hints");
         }
 
         if (isCorrect) {

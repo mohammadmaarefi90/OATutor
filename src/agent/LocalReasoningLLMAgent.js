@@ -7,9 +7,18 @@ import LLMBeliefStore from "./llm/LLMBeliefStore.js";
 import { completeChat } from "./llm/llmClient.js";
 import { getLLMSettingsSync, LLM_PROVIDER } from "./llm/llmSettings.js";
 import {
+    getSkillHintsForPrompt,
+    formatSkillHintsForPrompt,
+    resolveSkillHintMode,
+    resolveSkillBktBackend,
+} from "./llm/beliefRetrieval.js";
+import PyBKTRoster from "./llm/pyBKTRoster.js";
+import { SKILL_BKT_BACKEND } from "./llm/llmSettings.js";
+import {
     AGENT_PERFORMANCE_STORAGE_KEY,
     AGENT_REASONING_STORAGE_KEY,
     AGENT_BELIEFS_STORAGE_KEY,
+    AGENT_PYBKT_ROSTER_STORAGE_KEY,
 } from "./storageKeys.js";
 import {
     buildLLMAfterSnapshot,
@@ -30,7 +39,47 @@ export default class LocalReasoningLLMAgent extends BaseAgent {
         this.llmFallbacks = 0;
         this.beliefsLearned = 0;
         this._evaluationMode = false;
+        this._currentHintRetrieval = null;
+        this.pyBktRoster = null;
+        this._pyBktSessionReady = false;
         this.llmSettings = options.llmSettings || getLLMSettingsSync();
+    }
+
+    _usesPyBktBackend() {
+        return resolveSkillBktBackend(this.llmSettings || getLLMSettingsSync()) === SKILL_BKT_BACKEND.PYBKT;
+    }
+
+    async _ensurePyBktRoster() {
+        if (!this._usesPyBktBackend()) return;
+        if (!this.pyBktRoster) {
+            this.pyBktRoster = new PyBKTRoster(this.lesson.id, this.lesson, this.bktParams);
+        }
+        if (!this._pyBktSessionReady) {
+            this.llmSettings = getLLMSettingsSync();
+            await this.pyBktRoster.ensureSession(this.llmSettings);
+            this._pyBktSessionReady = true;
+        }
+    }
+
+    _lessonMastery() {
+        if (this._usesPyBktBackend() && this.pyBktRoster) {
+            return this.pyBktRoster.getLessonMastery();
+        }
+        return super._lessonMastery();
+    }
+
+    async _applyBktUpdate(skills, isCorrect) {
+        if (this._usesPyBktBackend()) {
+            await this._ensurePyBktRoster();
+            const mastery = await this.pyBktRoster.update(
+                skills,
+                isCorrect,
+                this.llmSettings || getLLMSettingsSync()
+            );
+            this.onMasteryUpdate(mastery);
+            return mastery;
+        }
+        return super._updateBKT(skills, isCorrect);
     }
 
     getReasoningGraph() {
@@ -49,23 +98,29 @@ export default class LocalReasoningLLMAgent extends BaseAgent {
         if (!this.browserStorage) return;
         const { getByKey, setByKey } = this.browserStorage;
         const type = AGENT_TYPES.LOCAL_LLM;
-        const [perfData, reasoningData, beliefData] = await Promise.all([
+        const [perfData, reasoningData, beliefData, pyBktData] = await Promise.all([
             getByKey(AGENT_PERFORMANCE_STORAGE_KEY(this.lesson.id, type)).catch(() => null),
             getByKey(AGENT_REASONING_STORAGE_KEY(this.lesson.id, type)).catch(() => null),
             getByKey(AGENT_BELIEFS_STORAGE_KEY(this.lesson.id, type)).catch(() => null),
+            getByKey(AGENT_PYBKT_ROSTER_STORAGE_KEY(this.lesson.id, type)).catch(() => null),
         ]);
         if (AgentPerformanceTracker.fromJSON(perfData))
             this.performance = AgentPerformanceTracker.fromJSON(perfData);
         if (ReasoningGraph.fromJSON(reasoningData))
             this.reasoningGraph = ReasoningGraph.fromJSON(reasoningData);
         if (LLMBeliefStore.fromJSON(beliefData)) this.beliefStore = LLMBeliefStore.fromJSON(beliefData);
+        const roster = PyBKTRoster.fromJSON(pyBktData, this.lesson, this.bktParams);
+        if (roster) {
+            this.pyBktRoster = roster;
+            this._pyBktSessionReady = false;
+        }
         this._persist = { getByKey, setByKey };
     }
 
     async savePersistedState() {
-        if (!this._persist) return;
+        if (!this._persist || this._evaluationMode) return;
         const type = AGENT_TYPES.LOCAL_LLM;
-        await Promise.all([
+        const saves = [
             this._persist.setByKey(
                 AGENT_PERFORMANCE_STORAGE_KEY(this.lesson.id, type),
                 this.performance.toJSON()
@@ -78,7 +133,16 @@ export default class LocalReasoningLLMAgent extends BaseAgent {
                 AGENT_BELIEFS_STORAGE_KEY(this.lesson.id, type),
                 this.beliefStore.toJSON()
             ),
-        ]);
+        ];
+        if (this.pyBktRoster) {
+            saves.push(
+                this._persist.setByKey(
+                    AGENT_PYBKT_ROSTER_STORAGE_KEY(this.lesson.id, type),
+                    this.pyBktRoster.toJSON()
+                )
+            );
+        }
+        await Promise.all(saves);
     }
 
     getMemoryStats() {
@@ -117,6 +181,9 @@ export default class LocalReasoningLLMAgent extends BaseAgent {
         run.llmFallbacks = this.llmFallbacks;
         run.beliefsLearned = this.beliefsLearned;
         run.beliefStats = this.beliefStore.getStats();
+        run.skillHintRetrieval = resolveSkillHintMode(this.llmSettings || getLLMSettingsSync());
+        run.skillBktBackend = resolveSkillBktBackend(this.llmSettings || getLLMSettingsSync());
+        run.pyBktStats = this.pyBktRoster?.getStats() || null;
         run.endedAt = Date.now();
         run.status = reason;
         run.durationMs = run.endedAt - run.startedAt;
@@ -127,21 +194,21 @@ export default class LocalReasoningLLMAgent extends BaseAgent {
         const settings = this.llmSettings || getLLMSettingsSync();
         const maxBeliefs = settings.maxBeliefsInPrompt || 12;
         const skills = cleanArray(step.knowledgeComponents || []);
-        const beliefs = includeBeliefs
-            ? this.beliefStore.getBeliefsForSkills(skills, maxBeliefs)
-            : [];
+        const hintMode = resolveSkillHintMode(settings);
+        const retrieval = includeBeliefs
+            ? getSkillHintsForPrompt(this.beliefStore, skills, maxBeliefs, hintMode)
+            : { hints: [], mode: hintMode, modeLabel: hintMode };
 
-        const beliefBlock =
-            beliefs.length > 0
-                ? beliefs.map((b, i) => `${i + 1}. ${b.text}`).join("\n")
-                : "(No prior hints learned yet for these skills.)";
+        this._currentHintRetrieval = retrieval;
+
+        const beliefBlock = formatSkillHintsForPrompt(retrieval.hints);
 
         const systemContent =
             "You are a math tutoring agent. Use the learned hints below when relevant. " +
             "Respond with ONLY the final answer in LaTeX wrapped in $$...$$ with no explanation.";
 
         const userContent =
-            `Learned hints from training (skills: ${skills.join(", ") || "general"}):\n` +
+            `Learned hints from training (skills: ${skills.join(", ") || "general"}, retrieval: ${retrieval.modeLabel}):\n` +
             `${beliefBlock}\n\n` +
             `Problem title: ${problem.title || ""}\n` +
             `Problem body: ${problem.body || ""}\n` +
@@ -218,6 +285,15 @@ export default class LocalReasoningLLMAgent extends BaseAgent {
             this._evaluationMode ? "local LLM + training beliefs" : "local reasoning LLM"
         );
         const llmResult = await this._queryLLM(step, problem, { includeBeliefs: useBeliefs });
+        if (this._currentHintRetrieval) {
+            this._emit("hint-retrieval", {
+                stepId: step.id,
+                agentType: AGENT_TYPES.LOCAL_LLM,
+                hintRetrievalMode: this._currentHintRetrieval.mode,
+                hintRetrievalLabel: this._currentHintRetrieval.modeLabel,
+                hintCount: this._currentHintRetrieval.hints?.length || 0,
+            });
+        }
         attempt = llmResult?.parsedAttempt ?? null;
         const llmCorrectBefore = attempt ? this._checkStepAnswer(step, attempt, seed) : false;
         llmBefore = buildLLMStepSnapshot(llmResult, { correct: llmCorrectBefore });
@@ -239,7 +315,7 @@ export default class LocalReasoningLLMAgent extends BaseAgent {
         let isCorrect = attempt ? this._checkStepAnswer(step, attempt, seed) : false;
         finalAttemptAfter = attempt;
 
-        if (!isCorrect) {
+        if (!isCorrect && this._shouldAllowHints()) {
             firstTry = false;
             this.llmFallbacks += 1;
             usedHints = true;
@@ -258,6 +334,9 @@ export default class LocalReasoningLLMAgent extends BaseAgent {
             if (!this._evaluationMode && isCorrect) {
                 this._learnBeliefsFromHints(step, problem);
             }
+        } else if (!isCorrect && this._strictNoClues) {
+            firstTry = false;
+            source = "strict-no-clue";
         }
 
         llmAfter = buildLLMAfterSnapshot({
@@ -270,9 +349,9 @@ export default class LocalReasoningLLMAgent extends BaseAgent {
         if (isCorrect) {
             if (firstTry) run.stepsCorrectFirstTry += 1;
             else run.stepsCorrectAfterLearning += 1;
-            this._updateBKT(skills, true);
+            await this._applyBktUpdate(skills, true);
         } else {
-            this._updateBKT(skills, false);
+            await this._applyBktUpdate(skills, false);
         }
 
         this._recordReasoningAnswer(attempt, isCorrect);
@@ -285,7 +364,13 @@ export default class LocalReasoningLLMAgent extends BaseAgent {
             llmBefore,
             llmAfter,
             expectedAnswer: getExpectedAnswerDisplay(step, seed),
+            hintRetrievalMode: this._currentHintRetrieval?.mode,
+            hintRetrievalLabel: this._currentHintRetrieval?.modeLabel,
+            skillBktBackend: resolveSkillBktBackend(this.llmSettings || getLLMSettingsSync()),
+            pyBktMastery: this.pyBktRoster?.getLessonMastery(),
+            strictNoClues: this._strictNoClues,
         });
+        this._currentHintRetrieval = null;
         await sleep(this.stepDelayMs);
         return isCorrect;
     }
@@ -312,11 +397,23 @@ export default class LocalReasoningLLMAgent extends BaseAgent {
     }
 
     async evaluateProblem(problem, options = {}) {
-        this._evaluationMode = true;
+        const persistLearning = options.persistLearning !== false;
+        await this.loadPersistedState?.();
+        const rosterSnapshot = this.pyBktRoster?.toJSON() || null;
+        this._evaluationMode = !persistLearning;
+        this._pyBktSessionReady = false;
         try {
             return await super.evaluateProblem(problem, options);
         } finally {
+            if (!persistLearning && rosterSnapshot && this.pyBktRoster) {
+                this.pyBktRoster = PyBKTRoster.fromJSON(
+                    rosterSnapshot,
+                    this.lesson,
+                    this.bktParams
+                );
+            }
             this._evaluationMode = false;
+            this._pyBktSessionReady = false;
         }
     }
 
@@ -333,6 +430,9 @@ export default class LocalReasoningLLMAgent extends BaseAgent {
             llmFallbacks: this.llmFallbacks,
             beliefStats: this.beliefStore.getStats(),
             isLocalGptOss: settings.provider === LLM_PROVIDER.LOCAL_GPT_OSS,
+            skillHintRetrieval: resolveSkillHintMode(settings),
+            skillBktBackend: resolveSkillBktBackend(settings),
+            pyBktStats: this.pyBktRoster?.getStats() || null,
         };
     }
 }

@@ -2,7 +2,21 @@
  * Build storable / downloadable curriculum reports without circular refs or huge logs.
  */
 
+import { AGENT_TYPES } from "./agentTypes.js";
 import { AGENT_CURRICULUM_REPORT_STORAGE_KEY } from "./storageKeys.js";
+
+function detectBktMode(report) {
+    const types = new Set();
+    (report.trainingLog || []).forEach((e) => e.agentType && types.add(e.agentType));
+    (report.testEvaluation?.problemResults || []).forEach(
+        (r) => r.agentType && types.add(r.agentType)
+    );
+    if (types.has(AGENT_TYPES.LOCAL_LLM_PROP_CHAIN_TREE)) return "proposition-chain-tree";
+    if (types.has(AGENT_TYPES.LOCAL_LLM_PROP_CHAIN)) return "proposition-chain";
+    if (types.has(AGENT_TYPES.LOCAL_LLM_PROP)) return "proposition";
+    if (types.has(AGENT_TYPES.LOCAL_LLM)) return "skill";
+    return "skill";
+}
 
 function slimLLMSnapshot(snap) {
     if (!snap) return null;
@@ -36,6 +50,13 @@ function slimSolveTrace(trace) {
             llmResponse: slimLLMSnapshot(s.llmResponse),
             actions: s.actions,
             timeline: s.timeline,
+            propBeliefDeltas: s.propBeliefDeltas,
+            propPolicySuggestion: s.propPolicySuggestion,
+            policyVersion: s.policyVersion,
+            hintRetrievalMode: s.hintRetrievalMode,
+            hintRetrievalLabel: s.hintRetrievalLabel,
+            bktMode: s.bktMode,
+            strictNoClues: s.strictNoClues,
         })),
     };
 }
@@ -54,6 +75,8 @@ function slimProblemResult(r) {
         firstTryRate: r.firstTryRate,
         error: r.error,
         isTestSet: r.isTestSet,
+        bktMode: r.bktMode,
+        strictNoClues: r.strictNoClues,
         solveTrace: slimSolveTrace(r.solveTrace),
     };
 }
@@ -107,6 +130,7 @@ function slimTestEvaluation(evalReport) {
         timestamp: evalReport.timestamp,
         splitType: evalReport.splitType,
         testProblemIds: evalReport.testProblemIds,
+        strictNoClues: evalReport.strictNoClues || false,
         summary: evalReport.summary,
         scoreboard: (evalReport.scoreboard || []).map(slimScoreboardRow),
         problemResults: (evalReport.problemResults || []).map(slimProblemResult),
@@ -135,16 +159,21 @@ function slimTestEvaluation(evalReport) {
 export function buildStorableCurriculumReport(report) {
     if (!report) return null;
 
+    const bktMode = report.bktMode || detectBktMode(report);
+
     return {
         reportId: report.reportId,
         timestamp: report.timestamp,
         courseName: report.courseName,
         trainingCompletedAt: report.trainingCompletedAt || report.timestamp,
         testOnly: report.testOnly || false,
+        strictNoClues: report.strictNoClues || report.testEvaluation?.strictNoClues || false,
+        bktMode,
         split: report.split,
         testProblems: report.testProblems,
         trainingLog: (report.trainingLog || []).map(slimTrainingLogEntry),
         testEvaluation: slimTestEvaluation(report.testEvaluation),
+        beliefGraph: report.beliefGraph || null,
     };
 }
 

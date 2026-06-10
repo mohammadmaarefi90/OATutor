@@ -1,9 +1,9 @@
 import { ALL_AGENT_TYPES, AGENT_META } from "./agentTypes.js";
 import { AGENT_EVALUATION_STORAGE_KEY } from "./storageKeys.js";
 
-export function buildEvaluationReport(problemResults) {
+export function buildEvaluationReport(problemResults, { agentTypes = ALL_AGENT_TYPES } = {}) {
     const byAgent = {};
-    ALL_AGENT_TYPES.forEach((type) => {
+    agentTypes.forEach((type) => {
         const results = problemResults.filter((r) => r.agentType === type);
         byAgent[type] = {
             agentType: type,
@@ -19,7 +19,7 @@ export function buildEvaluationReport(problemResults) {
         };
     });
 
-    const ranked = ALL_AGENT_TYPES.map((type) => ({
+    const ranked = agentTypes.map((type) => ({
         agentType: type,
         agentLabel: AGENT_META[type].label,
         score:
@@ -35,6 +35,7 @@ export function buildEvaluationReport(problemResults) {
         rankings: ranked.map((r, i) => ({ rank: i + 1, ...r })),
         winner: ranked[0] || null,
         problemResults,
+        agentTypes,
     };
 }
 

@@ -2,7 +2,15 @@ import MemoryAgent from "./MemoryAgent.js";
 import RLAgent from "./RLAgent.js";
 import LLMAgent from "./LLMAgent.js";
 import LocalReasoningLLMAgent from "./LocalReasoningLLMAgent.js";
-import { AGENT_TYPES, ALL_AGENT_TYPES } from "./agentTypes.js";
+import LocalPropositionalLLMAgent from "./LocalPropositionalLLMAgent.js";
+import LocalPropositionalChainLLMAgent from "./LocalPropositionalChainLLMAgent.js";
+import LocalPropositionalChainTreeLLMAgent from "./LocalPropositionalChainTreeLLMAgent.js";
+import {
+    AGENT_TYPES,
+    ALL_AGENT_TYPES,
+    EVALUATION_AGENT_TYPES,
+    LOCAL_LLM_AGENT_TYPES,
+} from "./agentTypes.js";
 import { getLLMSettingsSync } from "./llm/llmSettings.js";
 import { cloneBktParams, restoreBktParams } from "./bktSnapshot.js";
 import { filterProblemsForLesson } from "./problemSelection.js";
@@ -15,6 +23,9 @@ const AGENT_FACTORY = {
     [AGENT_TYPES.RL]: RLAgent,
     [AGENT_TYPES.LLM]: LLMAgent,
     [AGENT_TYPES.LOCAL_LLM]: LocalReasoningLLMAgent,
+    [AGENT_TYPES.LOCAL_LLM_PROP]: LocalPropositionalLLMAgent,
+    [AGENT_TYPES.LOCAL_LLM_PROP_CHAIN]: LocalPropositionalChainLLMAgent,
+    [AGENT_TYPES.LOCAL_LLM_PROP_CHAIN_TREE]: LocalPropositionalChainTreeLLMAgent,
 };
 
 export default class AgentOrchestrator {
@@ -28,9 +39,11 @@ export default class AgentOrchestrator {
         onEvent = () => {},
         onMasteryUpdate = () => {},
         stepDelayMs = 200,
+        skillModel = {},
     }) {
         this.lesson = lesson;
         this.problems = filterProblemsForLesson(problems, lesson);
+        this.skillModel = skillModel;
         this.bktParams = bktParams;
         this.heuristic = heuristic;
         this.hintPathway = hintPathway;
@@ -62,8 +75,14 @@ export default class AgentOrchestrator {
             onMasteryUpdate: this.onMasteryUpdate,
             stepDelayMs: this.stepDelayMs,
         };
-        if (agentType === AGENT_TYPES.LOCAL_LLM) {
+        if (
+            agentType === AGENT_TYPES.LOCAL_LLM ||
+            agentType === AGENT_TYPES.LOCAL_LLM_PROP ||
+            agentType === AGENT_TYPES.LOCAL_LLM_PROP_CHAIN ||
+            agentType === AGENT_TYPES.LOCAL_LLM_PROP_CHAIN_TREE
+        ) {
             options.llmSettings = getLLMSettingsSync();
+            options.skillModel = this.skillModel;
         }
         return new AgentClass(options);
     }
@@ -133,13 +152,16 @@ export default class AgentOrchestrator {
         return { comparison, agentOutputs };
     }
 
-    async evaluateOnProblems(problemIds) {
+    async evaluateOnProblems(
+        problemIds,
+        { agentTypes = EVALUATION_AGENT_TYPES, strictNoClues = false } = {}
+    ) {
         const initialBkt = cloneBktParams(this.bktParams);
         const problemResults = [];
 
-        this.onEvent({ type: "evaluation-start", problemIds, agents: ALL_AGENT_TYPES });
+        this.onEvent({ type: "evaluation-start", problemIds, agents: agentTypes, strictNoClues });
 
-        for (const agentType of ALL_AGENT_TYPES) {
+        for (const agentType of agentTypes) {
             if (this.cancelled) break;
 
             restoreBktParams(this.bktParams, cloneBktParams(initialBkt));
@@ -155,7 +177,10 @@ export default class AgentOrchestrator {
                 if (!problem) continue;
 
                 try {
-                    const result = await this.activeAgent.evaluateProblem(problem);
+                    const result = await this.activeAgent.evaluateProblem(problem, {
+                        persistLearning: !strictNoClues,
+                        strictNoClues,
+                    });
                     problemResults.push(result);
                 } catch (err) {
                     problemResults.push({
@@ -173,9 +198,10 @@ export default class AgentOrchestrator {
 
         restoreBktParams(this.bktParams, initialBkt);
 
-        const report = buildEvaluationReport(problemResults);
+        const report = buildEvaluationReport(problemResults, { agentTypes });
         report.lessonId = this.lesson.id;
         report.problemIds = problemIds;
+        report.strictNoClues = strictNoClues;
 
         await saveEvaluationReport(this.browserStorage, this.lesson.id, report);
 
@@ -184,4 +210,11 @@ export default class AgentOrchestrator {
     }
 }
 
-export { MemoryAgent, RLAgent, LLMAgent, LocalReasoningLLMAgent };
+export {
+    MemoryAgent,
+    RLAgent,
+    LLMAgent,
+    LocalReasoningLLMAgent,
+    LocalPropositionalLLMAgent,
+    LOCAL_LLM_AGENT_TYPES,
+};

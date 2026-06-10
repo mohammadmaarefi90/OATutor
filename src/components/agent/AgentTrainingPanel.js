@@ -30,6 +30,7 @@ import { SESSION_MODES } from "../../agent/storageKeys.js";
 import { filterProblemsForLesson } from "../../agent/problemSelection.js";
 import AgentEvaluationBox from "./AgentEvaluationBox.js";
 import LLMSettingsPanel from "./LLMSettingsPanel.js";
+import AgentBackupPanel from "./AgentBackupPanel.js";
 
 const METRIC_ROWS = [
     { key: "masteryEnd", label: "Final Mastery", format: (v) => `${Math.round(v * 100)}%`, higher: true },
@@ -72,6 +73,7 @@ class AgentTrainingPanel extends React.Component {
         return new AgentOrchestrator({
             lesson,
             problems,
+            skillModel: this.context.skillModel,
             bktParams: this.context.bktParams,
             heuristic: this.context.heuristic,
             hintPathway: this.context.hintPathway,
@@ -480,6 +482,13 @@ class AgentTrainingPanel extends React.Component {
 
                     <LLMSettingsPanel browserStorage={this.context.browserStorage} />
 
+                    <AgentBackupPanel
+                        browserStorage={this.context.browserStorage}
+                        lesson={lesson}
+                        scope="lesson"
+                        defaultOpen
+                    />
+
                     {this.renderAgentCards(lessonProblems)}
 
                     <Box mt={2}>
@@ -505,6 +514,141 @@ class AgentTrainingPanel extends React.Component {
                                     {running && runningAgent === AGENT_TYPES.LOCAL_LLM
                                         ? "Training local model..."
                                         : "Train Local GPT-OSS Agent"}
+                                </Button>
+                                <Typography variant="caption" color="textSecondary" display="block" style={{ marginTop: 8 }}>
+                                    Uses skill-level BKT (standard). Optional pyBKT backend in LLM
+                                    settings (Local GPT-OSS only). Standard agents above use classic
+                                    in-browser BKT.
+                                </Typography>
+                            </CardContent>
+                        </Card>
+                    </Box>
+
+                    <Box mt={2}>
+                        <Card
+                            variant="outlined"
+                            style={{ borderTop: "4px solid #6a1b9a" }}
+                        >
+                            <CardContent>
+                                <Box display="flex" alignItems="center" style={{ gap: 8 }} mb={1}>
+                                    <Typography variant="h6">
+                                        {AGENT_META[AGENT_TYPES.LOCAL_LLM_PROP].label}
+                                    </Typography>
+                                    <Chip
+                                        size="small"
+                                        label="Proposition-based beliefs"
+                                        style={{ backgroundColor: "#f3e5f5", color: "#6a1b9a" }}
+                                    />
+                                </Box>
+                                <Typography variant="body2" color="textSecondary" paragraph>
+                                    Beliefs update on individual ideas and reasoning chains—not only
+                                    whole skills. Uses @oatutor/proposition-bkt with local gpt-oss
+                                    reasoning. Multiple hint paths supported via structure + behavioral
+                                    graphs.
+                                </Typography>
+                                <Typography variant="caption" color="textSecondary" display="block" paragraph>
+                                    Experimental: updates P(know proposition) on each step. Reasoning chain
+                                    from lesson structure (prerequisite closure). Standard agents use
+                                    skill-level BKT.
+                                </Typography>
+                                <Button
+                                    variant="contained"
+                                    size="medium"
+                                    style={{ backgroundColor: "#6a1b9a", color: "#fff" }}
+                                    startIcon={<PlayArrowIcon />}
+                                    onClick={() =>
+                                        this.startSingleAgent(AGENT_TYPES.LOCAL_LLM_PROP)
+                                    }
+                                    disabled={running || lessonProblems.length === 0}
+                                >
+                                    {running && runningAgent === AGENT_TYPES.LOCAL_LLM_PROP
+                                        ? "Training propositional BKT..."
+                                        : "Train Propositional BKT Agent"}
+                                </Button>
+                            </CardContent>
+                        </Card>
+                    </Box>
+
+                    <Box mt={2}>
+                        <Card
+                            variant="outlined"
+                            style={{ borderTop: "4px solid #4527a0" }}
+                        >
+                            <CardContent>
+                                <Box display="flex" alignItems="center" style={{ gap: 8 }} mb={1}>
+                                    <Typography variant="h6">
+                                        {AGENT_META[AGENT_TYPES.LOCAL_LLM_PROP_CHAIN].label}
+                                    </Typography>
+                                    <Chip
+                                        size="small"
+                                        label="Chain reasoning loop"
+                                        style={{ backgroundColor: "#ede7f6", color: "#4527a0" }}
+                                    />
+                                </Box>
+                                <Typography variant="body2" color="textSecondary" paragraph>
+                                    {AGENT_META[AGENT_TYPES.LOCAL_LLM_PROP_CHAIN].description}
+                                </Typography>
+                                <Typography variant="caption" color="textSecondary" display="block" paragraph>
+                                    Training walks ordered proposition chains from lesson hints and structure.
+                                    Test evaluation is strict no-clue: the agent scores candidate chains and
+                                    tries them until one reaches the conclusion or chains are exhausted.
+                                </Typography>
+                                <Button
+                                    variant="contained"
+                                    size="medium"
+                                    style={{ backgroundColor: "#4527a0", color: "#fff" }}
+                                    startIcon={<PlayArrowIcon />}
+                                    onClick={() =>
+                                        this.startSingleAgent(AGENT_TYPES.LOCAL_LLM_PROP_CHAIN)
+                                    }
+                                    disabled={running || lessonProblems.length === 0}
+                                >
+                                    {running && runningAgent === AGENT_TYPES.LOCAL_LLM_PROP_CHAIN
+                                        ? "Training prop chain agent..."
+                                        : "Train Prop BKT Chain Agent"}
+                                </Button>
+                            </CardContent>
+                        </Card>
+                    </Box>
+
+                    <Box mt={2}>
+                        <Card
+                            variant="outlined"
+                            style={{ borderTop: "4px solid #283593" }}
+                        >
+                            <CardContent>
+                                <Box display="flex" alignItems="center" style={{ gap: 8 }} mb={1}>
+                                    <Typography variant="h6">
+                                        {AGENT_META[AGENT_TYPES.LOCAL_LLM_PROP_CHAIN_TREE].label}
+                                    </Typography>
+                                    <Chip
+                                        size="small"
+                                        label="Beam tree chains"
+                                        style={{ backgroundColor: "#e8eaf6", color: "#283593" }}
+                                    />
+                                </Box>
+                                <Typography variant="body2" color="textSecondary" paragraph>
+                                    {AGENT_META[AGENT_TYPES.LOCAL_LLM_PROP_CHAIN_TREE].description}
+                                </Typography>
+                                <Typography variant="caption" color="textSecondary" display="block" paragraph>
+                                    Separate agent from Prop Chain — own training state. Grows a beam
+                                    tree of idea paths; at each leaf picks the most relevant next
+                                    proposition, then tries best branches with gpt-oss.
+                                </Typography>
+                                <Button
+                                    variant="contained"
+                                    size="medium"
+                                    style={{ backgroundColor: "#283593", color: "#fff" }}
+                                    startIcon={<PlayArrowIcon />}
+                                    onClick={() =>
+                                        this.startSingleAgent(AGENT_TYPES.LOCAL_LLM_PROP_CHAIN_TREE)
+                                    }
+                                    disabled={running || lessonProblems.length === 0}
+                                >
+                                    {running &&
+                                    runningAgent === AGENT_TYPES.LOCAL_LLM_PROP_CHAIN_TREE
+                                        ? "Training prop tree agent..."
+                                        : "Train Prop BKT Chain Tree Agent"}
                                 </Button>
                             </CardContent>
                         </Card>

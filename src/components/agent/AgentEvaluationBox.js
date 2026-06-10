@@ -18,12 +18,33 @@ import {
     Typography,
 } from "@material-ui/core";
 import AssignmentIcon from "@material-ui/icons/Assignment";
+import GetAppIcon from "@material-ui/icons/GetApp";
 import { ThemeContext } from "../../config/config.js";
 import { filterLessonProblems } from "../../agent/lessonProblems.js";
 import { buildSolveTrace } from "../../agent/buildSolveTrace.js";
-import { AGENT_TYPES, AGENT_META, ALL_AGENT_TYPES } from "../../agent/agentTypes.js";
+import {
+    AGENT_TYPES,
+    AGENT_META,
+    ALL_AGENT_TYPES,
+    EVALUATION_AGENT_TYPES,
+} from "../../agent/agentTypes.js";
 import ReasoningDAGView from "./ReasoningDAGView.js";
 import EvaluationProblemView from "./EvaluationProblemView.js";
+import { latexToPlainEnglish } from "../../agent/walkthroughText.js";
+import { downloadLessonEvaluationReportPdf } from "../../agent/testReportPdfExport.js";
+
+function evalAgentTabLabel(type) {
+    return AGENT_META[type]?.tableLabel || AGENT_META[type]?.shortLabel || type;
+}
+
+function isLocalGptOssEval(agentType) {
+    return (
+        agentType === AGENT_TYPES.LOCAL_LLM ||
+        agentType === AGENT_TYPES.LOCAL_LLM_PROP ||
+        agentType === AGENT_TYPES.LOCAL_LLM_PROP_CHAIN ||
+        agentType === AGENT_TYPES.LOCAL_LLM_PROP_CHAIN_TREE
+    );
+}
 
 class AgentEvaluationBox extends React.Component {
     static contextType = ThemeContext;
@@ -102,16 +123,39 @@ class AgentEvaluationBox extends React.Component {
         });
     };
 
-    runEvaluation = async () => {
+    downloadEvaluationPdf = () => {
+        const { evaluationReport, strictNoClueEval } = this.state;
+        const { lesson } = this.props;
+        if (!evaluationReport) return;
+        try {
+            downloadLessonEvaluationReportPdf(evaluationReport, {
+                lessonName: lesson?.name,
+                lessonId: lesson?.id,
+            });
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
+    runEvaluation = async (agentTypes = EVALUATION_AGENT_TYPES, { strictNoClues = false } = {}) => {
         const { selectedProblems } = this.state;
         if (selectedProblems.length === 0) return;
+
+        const defaultTab = agentTypes[0] || AGENT_TYPES.MEMORY;
 
         this.setState({
             evaluating: true,
             evaluationReport: null,
             liveEval: { events: [], agentLabel: "Starting…" },
+            activeAgentTab: defaultTab,
+            evalAgentTypes: agentTypes,
+            strictNoClueEval: strictNoClues,
         });
-        this.handleEvalEvent({ type: "evaluation-start", count: selectedProblems.length });
+        this.handleEvalEvent({
+            type: "evaluation-start",
+            count: selectedProblems.length,
+            strictNoClues,
+        });
 
         try {
             const orchestrator = this.props.getOrchestrator();
@@ -121,13 +165,17 @@ class AgentEvaluationBox extends React.Component {
                 this.handleEvalEvent(event);
             };
 
-            const report = await orchestrator.evaluateOnProblems(selectedProblems);
+            const report = await orchestrator.evaluateOnProblems(selectedProblems, {
+                agentTypes,
+                strictNoClues,
+            });
             orchestrator.onEvent = priorOnEvent;
 
             this.setState({
                 evaluationReport: report,
                 evaluating: false,
                 activeProblemTab: 0,
+                activeAgentTab: defaultTab,
                 liveEval: null,
             });
             this.handleEvalEvent({ type: "evaluation-complete", report });
@@ -203,8 +251,9 @@ class AgentEvaluationBox extends React.Component {
                         solveTrace={liveEval.partialTrace}
                         agentType={liveEval.agentType}
                         agentLabel={liveEval.agentLabel}
+                        agentColor={AGENT_META[liveEval.agentType]?.color}
                         activeStepId={liveEval.activeStepId}
-                        compact
+                        compact={!isLocalGptOssEval(liveEval.agentType)}
                     />
                 )}
             </Box>
@@ -241,7 +290,7 @@ class AgentEvaluationBox extends React.Component {
                             }}
                         >
                             <TableCell style={{ color: AGENT_META[r.agentType]?.color }}>
-                                {AGENT_META[r.agentType]?.shortLabel}
+                                {evalAgentTabLabel(r.agentType)}
                             </TableCell>
                             <TableCell>
                                 <Typography variant="body2">{r.problemTitle || r.problemId}</Typography>
@@ -264,7 +313,11 @@ class AgentEvaluationBox extends React.Component {
     }
 
     renderReasoningSection(report) {
-        const { activeAgentTab, activeProblemTab } = this.state;
+        const { activeAgentTab, activeProblemTab, evalAgentTypes } = this.state;
+        const agentTypes =
+            evalAgentTypes ||
+            report.agentTypes ||
+            [...new Set(report.problemResults.map((r) => r.agentType))];
         const agentResults = report.problemResults.filter((r) => r.agentType === activeAgentTab);
         const problemIds = [...new Set(agentResults.map((r) => r.problemId))];
         const currentProblemId = problemIds[activeProblemTab];
@@ -284,11 +337,11 @@ class AgentEvaluationBox extends React.Component {
                     indicatorColor="primary"
                     variant="fullWidth"
                 >
-                    {ALL_AGENT_TYPES.map((type) => (
+                    {agentTypes.map((type) => (
                         <Tab
                             key={type}
                             value={type}
-                            label={AGENT_META[type].shortLabel}
+                            label={evalAgentTabLabel(type)}
                             style={{ color: AGENT_META[type].color }}
                         />
                     ))}
@@ -304,11 +357,18 @@ class AgentEvaluationBox extends React.Component {
                     {problemIds.map((pid, i) => {
                         const pr = agentResults.find((r) => r.problemId === pid);
                         const prob = this.findProblem(pid);
+                        const firstStep = prob?.steps?.[0];
+                        const plain =
+                            latexToPlainEnglish(firstStep?.stepTitle || firstStep?.stepBody || "") ||
+                            prob?.title ||
+                            pr?.problemTitle ||
+                            pid;
                         return (
                             <Tab
                                 key={pid}
                                 value={i}
-                                label={(prob?.title || pr?.problemTitle || pid).slice(0, 28)}
+                                title={prob?.title || pr?.problemTitle || pid}
+                                label={plain.slice(0, 36)}
                             />
                         );
                     })}
@@ -320,6 +380,7 @@ class AgentEvaluationBox extends React.Component {
                         solveTrace={currentResult?.solveTrace}
                         agentType={activeAgentTab}
                         agentLabel={AGENT_META[activeAgentTab]?.label}
+                        agentColor={AGENT_META[activeAgentTab]?.color}
                     />
                 </Box>
 
@@ -360,27 +421,91 @@ class AgentEvaluationBox extends React.Component {
                 </Box>
 
                 <Typography variant="body2" color="textSecondary" paragraph>
-                    Select problems and watch each agent solve them step by step — you see the
-                    actual question text, what the agent tried, hints used, and the reasoning DAG.
+                    Select problems and watch each agent solve them step by step — full problem
+                    statement, LLM before/after responses for trained GPT-OSS agents, hints used,
+                    and reasoning graphs.
                 </Typography>
 
                 {this.renderProblemPicker()}
 
-                <Box mt={2} display="flex" alignItems="center" style={{ gap: 12 }}>
+                <Box mt={2} display="flex" alignItems="center" flexWrap="wrap" style={{ gap: 12 }}>
                     <Button
                         variant="contained"
                         style={{ backgroundColor: "#ff9800", color: "#fff" }}
-                        onClick={this.runEvaluation}
+                        onClick={() => this.runEvaluation(EVALUATION_AGENT_TYPES)}
                         disabled={evaluating || selectedProblems.length === 0}
                     >
                         {evaluating
                             ? "Evaluating..."
-                            : `Evaluate ${selectedProblems.length} problem(s) with all agents`}
+                            : `Evaluate all agents (${selectedProblems.length} problem${selectedProblems.length === 1 ? "" : "s"})`}
+                    </Button>
+                    <Button
+                        variant="contained"
+                        style={{ backgroundColor: "#e65100", color: "#fff" }}
+                        onClick={() => this.runEvaluation([AGENT_TYPES.LOCAL_LLM])}
+                        disabled={evaluating || selectedProblems.length === 0}
+                    >
+                        GPT-OSS walkthrough
+                    </Button>
+                    <Button
+                        variant="contained"
+                        style={{ backgroundColor: "#6a1b9a", color: "#fff" }}
+                        onClick={() => this.runEvaluation([AGENT_TYPES.LOCAL_LLM_PROP])}
+                        disabled={evaluating || selectedProblems.length === 0}
+                    >
+                        Prop BKT walkthrough
+                    </Button>
+                    <Button
+                        variant="contained"
+                        style={{ backgroundColor: "#4527a0", color: "#fff" }}
+                        onClick={() => this.runEvaluation([AGENT_TYPES.LOCAL_LLM_PROP_CHAIN])}
+                        disabled={evaluating || selectedProblems.length === 0}
+                    >
+                        Prop Chain walkthrough
+                    </Button>
+                    <Button
+                        variant="contained"
+                        style={{ backgroundColor: "#283593", color: "#fff" }}
+                        onClick={() => this.runEvaluation([AGENT_TYPES.LOCAL_LLM_PROP_CHAIN_TREE])}
+                        disabled={evaluating || selectedProblems.length === 0}
+                    >
+                        Prop Tree walkthrough
+                    </Button>
+                    <Button
+                        variant="contained"
+                        style={{ backgroundColor: "#1b5e20", color: "#fff" }}
+                        onClick={() =>
+                            this.runEvaluation(
+                                [
+                                    AGENT_TYPES.LOCAL_LLM,
+                                    AGENT_TYPES.LOCAL_LLM_PROP,
+                                    AGENT_TYPES.LOCAL_LLM_PROP_CHAIN,
+                                    AGENT_TYPES.LOCAL_LLM_PROP_CHAIN_TREE,
+                                ],
+                                { strictNoClues: true }
+                            )
+                        }
+                        disabled={evaluating || selectedProblems.length === 0}
+                    >
+                        Strict no-clue (GPT-OSS agents)
+                    </Button>
+                    <Button
+                        variant="outlined"
+                        onClick={() => this.runEvaluation(ALL_AGENT_TYPES)}
+                        disabled={evaluating || selectedProblems.length === 0}
+                    >
+                        Legacy 3 agents only
                     </Button>
                     {selectedProblems.length > 0 && (
                         <Chip size="small" label={`${selectedProblems.length} selected`} />
                     )}
                 </Box>
+                <Typography variant="caption" color="textSecondary" display="block" style={{ marginTop: 8 }}>
+                    GPT-OSS buttons require prior training on this lesson. Change hint retrieval
+                    mode in LLM settings above, then re-run evaluation to compare which strategy
+                    scores better. Walkthrough shows retrieval mode per step. Strict no-clue
+                    strips hints and disables hint fallback — trained beliefs/chains still apply.
+                </Typography>
 
                 {this.renderLiveEvaluation()}
 
@@ -402,6 +527,24 @@ class AgentEvaluationBox extends React.Component {
                                 />
                             )}
                             {this.renderPerformanceTable(evaluationReport)}
+                            <Box mt={2}>
+                                <Button
+                                    variant="contained"
+                                    color="primary"
+                                    size="small"
+                                    startIcon={<GetAppIcon />}
+                                    onClick={this.downloadEvaluationPdf}
+                                >
+                                    Download PDF report
+                                </Button>
+                                {this.state.strictNoClueEval && (
+                                    <Chip
+                                        size="small"
+                                        label="Strict no-clue evaluation"
+                                        style={{ marginLeft: 8 }}
+                                    />
+                                )}
+                            </Box>
                         </Box>
                         {this.renderReasoningSection(evaluationReport)}
                     </Box>
