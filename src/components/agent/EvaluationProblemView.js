@@ -357,6 +357,59 @@ class EvaluationProblemView extends React.Component {
         );
     }
 
+    renderPlanPanel(stepTrace) {
+        const plan = stepTrace.propPlan;
+        if (!plan) return null;
+
+        return (
+            <Box mt={1.5}>
+                <Typography variant="caption" color="textSecondary" display="block" gutterBottom>
+                    Hint plan ({plan.planVersion || "hint-plan"})
+                    {stepTrace.strictNoClues ? " — strict no-clue" : ""}
+                </Typography>
+                <Paper variant="outlined" style={{ padding: 8, backgroundColor: "#fff8e1" }}>
+                    {plan.pivots?.length > 0 && (
+                        <Box mb={1}>
+                            <Typography variant="body2" style={{ fontWeight: 600, fontSize: 13 }}>
+                                Pivot ideas
+                            </Typography>
+                            {plan.pivots.map((p, i) => (
+                                <Typography key={p.id || i} variant="body2" style={{ fontSize: 13, lineHeight: 1.55 }}>
+                                    {i + 1}. [{Math.round((p.probMastery || 0) * 100)}%]{" "}
+                                    {latexToPlainEnglish(p.text || "")}
+                                </Typography>
+                            ))}
+                        </Box>
+                    )}
+                    {plan.relevantHints?.length > 0 && (
+                        <Box mb={1}>
+                            <Typography variant="body2" style={{ fontWeight: 600, fontSize: 13 }}>
+                                Relevant hints
+                            </Typography>
+                            {plan.relevantHints.map((h, i) => (
+                                <Typography key={h.hintId || i} variant="body2" style={{ fontSize: 13, lineHeight: 1.55 }}>
+                                    {i + 1}. {latexToPlainEnglish(h.text || "")}
+                                </Typography>
+                            ))}
+                        </Box>
+                    )}
+                    {plan.candidateChains?.length > 0 && (
+                        <Box>
+                            <Typography variant="body2" style={{ fontWeight: 600, fontSize: 13 }}>
+                                Candidate chains
+                            </Typography>
+                            {plan.candidateChains.map((c, i) => (
+                                <Typography key={c.key || i} variant="body2" style={{ fontSize: 13, lineHeight: 1.55 }}>
+                                    {i + 1}. (score {(c.score ?? 0).toFixed(2)}) {c.rootText || c.key}
+                                </Typography>
+                            ))}
+                        </Box>
+                    )}
+                </Paper>
+            </Box>
+        );
+    }
+
     renderSuggestedFocus(stepTrace) {
         const focus = stepTrace.propPolicySuggestion;
         if (!focus?.text) return null;
@@ -646,6 +699,7 @@ class EvaluationProblemView extends React.Component {
                     agentType === AGENT_TYPES.LOCAL_LLM_PROP_CHAIN_TREE) && (
                     <>
                         {this.renderChainPanel(stepTrace)}
+                        {this.renderPlanPanel(stepTrace)}
                         {this.renderSuggestedFocus(stepTrace)}
                         {this.renderPropBeliefDeltas(stepTrace)}
                     </>

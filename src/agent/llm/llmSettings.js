@@ -1,6 +1,6 @@
 /**
  * Browser-persisted settings for local (llama.cpp) and cloud LLM backends.
- * Defaults match scripts/serve-gpt-oss-20b-gpu.sh (127.0.0.1:8080).
+ * Build-time defaults from REACT_APP_LLM_* (.env); overridable in LLM settings UI.
  */
 
 export const LLM_PROVIDER = {
@@ -27,19 +27,66 @@ export const PROP_HINT_MODES = {
     LOWEST_MASTERY: "lowest-mastery",
 };
 
+/** Training write path — how hints are revealed during Prop BKT training. */
+export const PROP_TRAINING_HINT_MODES = {
+    FULL_PATHWAY: "full-pathway",
+    PARTIAL_SEQUENTIAL: "partial-sequential",
+    PLANNER_GUIDED: "planner-guided",
+};
+
 /** Skill BKT backend for Local GPT-OSS only. */
 export const SKILL_BKT_BACKEND = {
     CLASSIC: "classic",
     PYBKT: "pybkt",
 };
 
+function envInt(name, fallback) {
+    const raw = process.env[name];
+    if (raw == null || raw === "") return fallback;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+/** Defaults baked at build time from .env (Create React App). */
+export const ENV_LLM_DEFAULTS = {
+    localBaseUrl: process.env.REACT_APP_LLM_BASE_URL || "http://10.10.102.139:8080/v1",
+    localModel: process.env.REACT_APP_LLM_MODEL || "gpt-oss-20b-MXFP4.gguf",
+    localApiKey: process.env.REACT_APP_LLM_API_KEY || "not-needed",
+    reasoningEffort: process.env.REACT_APP_LLM_REASONING_EFFORT || "medium",
+    requestTimeoutMs: envInt("REACT_APP_LLM_TIMEOUT_MS", 180000),
+};
+
+/**
+ * REACT_APP_LLM_* overrides win over browser-stored values so deployment
+ * can point all clients at the shared inference host without manual UI edits.
+ */
+export function applyEnvLLMOverrides(settings) {
+    const out = { ...settings };
+    if (process.env.REACT_APP_LLM_BASE_URL) {
+        out.localBaseUrl = process.env.REACT_APP_LLM_BASE_URL;
+    }
+    if (process.env.REACT_APP_LLM_MODEL) {
+        out.localModel = process.env.REACT_APP_LLM_MODEL;
+    }
+    if (process.env.REACT_APP_LLM_API_KEY) {
+        out.localApiKey = process.env.REACT_APP_LLM_API_KEY;
+    }
+    if (process.env.REACT_APP_LLM_REASONING_EFFORT) {
+        out.reasoningEffort = process.env.REACT_APP_LLM_REASONING_EFFORT;
+    }
+    if (process.env.REACT_APP_LLM_TIMEOUT_MS) {
+        out.requestTimeoutMs = envInt("REACT_APP_LLM_TIMEOUT_MS", out.requestTimeoutMs);
+    }
+    return out;
+}
+
 export const DEFAULT_LLM_SETTINGS = {
     provider: LLM_PROVIDER.LOCAL_GPT_OSS,
-    localBaseUrl: "http://127.0.0.1:8080/v1",
-    localModel: "gpt-oss-20b",
-    localApiKey: "not-needed",
-    reasoningEffort: "medium",
-    requestTimeoutMs: 120000,
+    localBaseUrl: ENV_LLM_DEFAULTS.localBaseUrl,
+    localModel: ENV_LLM_DEFAULTS.localModel,
+    localApiKey: ENV_LLM_DEFAULTS.localApiKey,
+    reasoningEffort: ENV_LLM_DEFAULTS.reasoningEffort,
+    requestTimeoutMs: ENV_LLM_DEFAULTS.requestTimeoutMs,
     maxBeliefsInPrompt: 12,
     /** Propositional BKT only — Plan C uncertainty-first policy */
     propPolicyMaxSuggestions: 3,
@@ -47,6 +94,16 @@ export const DEFAULT_LLM_SETTINGS = {
     propPolicyMasteryThreshold: 0.95,
     skillHintRetrieval: SKILL_HINT_MODES.RECENCY,
     propHintRetrieval: PROP_HINT_MODES.RELEVANCE,
+    /** Prop BKT + Tree agents: hint-grounded planning (ideas, hints, chains per pivot) */
+    propPlanningEnabled: false,
+    propPlanningMaxPivots: 3,
+    propPlanningMaxChains: 5,
+    propPlanningMaxHints: 8,
+    /** Prop BKT training write path — hint reveal strategy */
+    propTrainingHintMode: PROP_TRAINING_HINT_MODES.PLANNER_GUIDED,
+    propTrainingRetryLlm: true,
+    propTrainingAllowAnswerKey: true,
+    propTrainingMaxHintsPerStep: 8,
     /** Local GPT-OSS only: classic in-browser BKT vs pyBKT roster service */
     skillBktBackend: SKILL_BKT_BACKEND.CLASSIC,
     pyBktBaseUrl: "http://127.0.0.1:8090",
@@ -59,16 +116,16 @@ const STORAGE_KEY = "oatutor-llm-settings";
 
 export function loadLLMSettings(browserStorage) {
     if (!browserStorage?.getByKey) {
-        return { ...DEFAULT_LLM_SETTINGS };
+        return applyEnvLLMOverrides({ ...DEFAULT_LLM_SETTINGS });
     }
     return browserStorage
         .getByKey(STORAGE_KEY)
-        .then((saved) => ({ ...DEFAULT_LLM_SETTINGS, ...(saved || {}) }))
-        .catch(() => ({ ...DEFAULT_LLM_SETTINGS }));
+        .then((saved) => applyEnvLLMOverrides({ ...DEFAULT_LLM_SETTINGS, ...(saved || {}) }))
+        .catch(() => applyEnvLLMOverrides({ ...DEFAULT_LLM_SETTINGS }));
 }
 
 export function saveLLMSettings(browserStorage, settings) {
-    const merged = { ...DEFAULT_LLM_SETTINGS, ...settings };
+    const merged = applyEnvLLMOverrides({ ...DEFAULT_LLM_SETTINGS, ...settings });
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
     } catch {
@@ -83,10 +140,14 @@ export function saveLLMSettings(browserStorage, settings) {
 export function getLLMSettingsSync() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return { ...DEFAULT_LLM_SETTINGS };
-        return { ...DEFAULT_LLM_SETTINGS, ...JSON.parse(raw) };
+        if (!raw) return applyEnvLLMOverrides({ ...DEFAULT_LLM_SETTINGS });
+        const merged = applyEnvLLMOverrides({ ...DEFAULT_LLM_SETTINGS, ...JSON.parse(raw) });
+        if (typeof merged.propPlanningEnabled === "string") {
+            merged.propPlanningEnabled = merged.propPlanningEnabled === "true";
+        }
+        return merged;
     } catch {
-        return { ...DEFAULT_LLM_SETTINGS };
+        return applyEnvLLMOverrides({ ...DEFAULT_LLM_SETTINGS });
     }
 }
 

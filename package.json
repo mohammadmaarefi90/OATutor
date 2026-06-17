@@ -50,6 +50,11 @@
     "predeploy": "npm run build",
     "deploy": "gh-pages -d build",
     "test": "react-app-rewired test",
+    "test:planner": "node --test src/agent/llm/propositionHintPlanner.test.js",
+    "test:training-path": "node --test src/agent/llm/propositionTrainingPath.test.js",
+    "report:prop-bkt-planning": "node scripts/generate-prop-bkt-report-pdf.mjs",
+    "test:llm-client": "node --test src/agent/llm/llmClient.test.js",
+    "test:gpt-oss": "python3 scripts/test-gpt-oss-inference.py --base-url http://10.10.102.139:8080/v1 --skip-reasoning",
     "pretest": "node src/tools/preprocessProblemPool.js",
     "eject": "react-scripts eject",
     "fix-lockfile": "npm install --package-lock-only"

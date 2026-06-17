@@ -119,6 +119,16 @@ class AgentTrainingPanel extends React.Component {
                 return `${prefix}LLM answer for ${event.stepId}`;
             case "llm-error":
                 return `${prefix}LLM error: ${event.message || "unknown"}`;
+            case "error":
+                return `${prefix}Error: ${event.message || "unknown"}`;
+            case "prop-plan":
+                return `${prefix}Hint plan: ${event.pivotCount ?? 0} pivot(s), ${event.hintCount ?? 0} hint(s), ${event.chainCount ?? 0} chain(s)`;
+            case "prop-training-start":
+                return `${prefix}Training write path: ${event.trainingMode || "planner-guided"} (${event.pathwayLength ?? 0} hints in pathway)`;
+            case "prop-training-hint":
+                return `${prefix}Training hint #${event.hintsRevealedTotal ?? "?"}: ${event.reason || "reveal"} (${event.hintId || ""})`;
+            case "prop-training-retry":
+                return `${prefix}LLM retry after ${event.hintsRevealed ?? 0} hint(s): ${event.isCorrect ? "✓" : "✗"}`;
             case "learn":
                 return `${prefix}Learned from hints on ${event.stepId}`;
             case "step-complete":

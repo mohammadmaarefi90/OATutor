@@ -148,7 +148,7 @@ export default class SimplePdfWriter {
         this.pages[this.pages.length - 1].push({ type: "line", x1, y1, x2, y2 });
     }
 
-    toBlob() {
+    _buildPdfString() {
         const contentStreams = [];
         const pageObjs = [];
         const objCount = 5 + this.pages.length * 2;
@@ -252,7 +252,16 @@ export default class SimplePdfWriter {
         pdf += `trailer<</Size ${objects.length + 1}/Root 1 0 R>>\n`;
         pdf += `startxref\n${xrefPos}\n%%EOF`;
 
-        return new Blob([pdf], { type: "application/pdf" });
+        return pdf;
+    }
+
+    toBlob() {
+        return new Blob([this._buildPdfString()], { type: "application/pdf" });
+    }
+
+    /** Node / CLI: write PDF bytes to a file path. */
+    toBuffer() {
+        return Buffer.from(this._buildPdfString(), "binary");
     }
 
     download(filename) {

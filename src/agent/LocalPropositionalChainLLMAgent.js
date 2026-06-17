@@ -184,44 +184,45 @@ export default class LocalPropositionalChainLLMAgent extends LocalPropositionalL
         };
     }
 
-    async _learnFromHints(step, problem, seed, run) {
-        const pathway = this._resolveHintPathway(step);
-        run.hintsConsumed += pathway.length;
-
+    _recordPartialPathwayChain(step, revealedPathway, { source = "hint-pathway", finalize = false } = {}) {
         const structure = this.propEngine.structureGraphs[this.lesson.id];
         const stepContent = this.propEngine.stepContent?.[step.id];
-        const hintChainIds = chainFromHintPathway(structure, pathway, stepContent);
+        const hintChainIds = chainFromHintPathway(structure, revealedPathway, stepContent);
 
-        if (hintChainIds.length > 0) {
-            recordChainTransitions(this.reasoningGraph, hintChainIds, {
-                type: "prop-chain",
-                action: "hint-pathway",
-                stepId: step.id,
-            });
-            this.chainStore.rememberStepChain(step.id, hintChainIds);
-            if (!this._evaluationMode) {
-                this.chainStore.recordOutcome(hintChainIds, true);
-            }
-            this._emit("prop-chain-learned", {
-                stepId: step.id,
-                chainKey: hintChainIds.join("→"),
-                propIds: hintChainIds,
-                source: "hint-pathway",
-            });
+        if (hintChainIds.length === 0) return;
+
+        recordChainTransitions(this.reasoningGraph, hintChainIds, {
+            type: "prop-chain",
+            action: source,
+            stepId: step.id,
+        });
+
+        if (!finalize) return;
+
+        this.chainStore.rememberStepChain(step.id, hintChainIds);
+        if (!this._evaluationMode) {
+            this.chainStore.recordOutcome(hintChainIds, true);
         }
+        this._emit("prop-chain-learned", {
+            stepId: step.id,
+            chainKey: hintChainIds.join("→"),
+            propIds: hintChainIds,
+            source,
+            hintsInPath: revealedPathway.length,
+        });
+    }
 
-        for (let i = 0; i < pathway.length; i++) {
-            const hint = pathway[i];
-            this._processPropHintReveal(step, hint, i);
-            if (this.reasoningSession) {
-                this.reasoningSession.visitHint(hint, step.id, i);
-            }
-            await sleep(this.stepDelayMs / 3);
-            if (this.cancelled) return null;
-        }
+    _onTrainingHintRevealed(step, _hint, _pathwayIndex, selection, revealedPathway) {
+        const source =
+            selection?.reason === "full-pathway" ? "hint-pathway" : "hint-pathway-partial";
+        this._recordPartialPathwayChain(step, revealedPathway, { source, finalize: false });
+    }
 
-        const learned = this._getAnswerFromHints(pathway);
-        return learned?.answer || step.stepAnswer?.[0] || null;
+    _onTrainingPathwayComplete(step, revealedPathway) {
+        this._recordPartialPathwayChain(step, revealedPathway, {
+            source: "hint-pathway-complete",
+            finalize: true,
+        });
     }
 
     async _solveStep(step, problem, seed, run) {

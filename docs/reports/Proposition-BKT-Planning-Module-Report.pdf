@@ -1,0 +1,457 @@
+%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R 19 0 R]/Count 7>>endobj
+4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica-Bold>>endobj
+6 0 obj<</Length 2554>>stream
+BT
+/F2 16 Tf
+1 0 0 1 48 744 Tm (Proposition BKT with Hint Planning Module) Tj
+/F1 11 Tf
+1 0 0 1 48 720 Tm (OATutor Technical Report) Tj
+/F1 9 Tf
+1 0 0 1 48 702 Tm (Generated: June 17, 2026 | Plan version: hint-plan-v1) Tj
+/F2 12 Tf
+1 0 0 1 48 674 Tm (1. Executive Summary) Tj
+/F1 10 Tf
+1 0 0 1 48 656 Tm (Propositional BKT \(Prop BKT\) tracks P\(know proposition\) for individual mathematical ideas) Tj
+1 0 0 1 48 642 Tm (extracted from step text, hints, and answers  instead of coarse skill-level BKT. The hint) Tj
+1 0 0 1 48 628 Tm (planning module compiles trained beliefs and lesson structure into a per-step plan: pivot) Tj
+1 0 0 1 48 614 Tm (ideas, relevant training hints, and scored reasoning chains  without calling an LLM.) Tj
+1 0 0 1 48 592 Tm (Planning applies only to:) Tj
+1 0 0 1 56 574 Tm (" Local GPT-OSS + Propositional BKT \(local-llm-prop-bkt\)) Tj
+1 0 0 1 56 560 Tm (" Local GPT-OSS + Prop BKT Chain Tree \(local-llm-prop-chain-tree-bkt\)) Tj
+/F1 9 Tf
+1 0 0 1 48 546 Tm (Default: propPlanningEnabled = false \(opt-in via LLM settings\).) Tj
+/F2 12 Tf
+1 0 0 1 48 520 Tm (2. Skill BKT vs Proposition BKT) Tj
+/F2 10 Tf
+1 0 0 1 48 502 Tm (Dimension) Tj
+1 0 0 1 248 502 Tm (Skill BKT) Tj
+1 0 0 1 338 502 Tm (Prop BKT) Tj
+/F1 10 Tf
+1 0 0 1 48 486 Tm (Unit) Tj
+1 0 0 1 248 486 Tm (Knowledge component) Tj
+1 0 0 1 338 486 Tm (Individual proposition) Tj
+1 0 0 1 48 470 Tm (LLM input) Tj
+1 0 0 1 248 470 Tm (Hint text list) Tj
+1 0 0 1 338 470 Tm (Ranked ideas + structure) Tj
+1 0 0 1 48 454 Tm (Graph) Tj
+1 0 0 1 248 454 Tm (None) Tj
+1 0 0 1 338 454 Tm (Structure + behavioral) Tj
+1 0 0 1 48 438 Tm (Graduation) Tj
+1 0 0 1 248 438 Tm (Avg KC >= 95%) Tj
+1 0 0 1 338 438 Tm (Answer props >= threshold) Tj
+/F2 12 Tf
+1 0 0 1 48 414 Tm (3. System Architecture) Tj
+1 0 0 1 48 396 Tm (High-level data flow) Tj
+ET
+196 338 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 356 Tm (Lesson content ingest) Tj
+BT
+ET
+306 332 m 306 316 l S
+BT
+ET
+196 252 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 270 Tm (StructureGraph +) Tj
+1 0 0 1 200 260 Tm (BeliefStore) Tj
+BT
+ET
+306 246 m 306 230 l S
+BT
+ET
+196 166 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 184 Tm (Prop BKT agent) Tj
+1 0 0 1 200 174 Tm (training) Tj
+BT
+ET
+306 160 m 306 144 l S
+BT
+ET
+196 80 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 98 Tm (buildStepPlan) Tj
+1 0 0 1 200 88 Tm (\\\(hint-plan-v1\\\)) Tj
+BT
+ET
+306 74 m 306 58 l S
+BT
+ET
+196 -6 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 12 Tm (gpt-oss LLM prompt) Tj
+BT
+ET
+306 -12 m 306 -28 l S
+BT
+ET
+196 -92 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 -74 Tm (Step answer + BKT) Tj
+1 0 0 1 200 -84 Tm (update) Tj
+BT
+ET
+endstream
+8 0 obj<</Length 1888>>stream
+BT
+/F2 12 Tf
+1 0 0 1 48 744 Tm (4. Content Ingestion) Tj
+/F1 10 Tf
+1 0 0 1 48 726 Tm (Each step is decomposed into propositions linked by structural edges: sequence,) Tj
+1 0 0 1 48 712 Tm (prerequisite, supports, depends, step-to-hint, and skill-link.) Tj
+1 0 0 1 56 694 Tm (" Step propositions  from step body text) Tj
+1 0 0 1 56 680 Tm (" Hint propositions  from hint pathway) Tj
+1 0 0 1 56 666 Tm (" Answer proposition  target for reasoning chains) Tj
+1 0 0 1 56 652 Tm (" stepContent stores pathway, hintPropMap, answerPropId per step) Tj
+/F2 12 Tf
+1 0 0 1 48 630 Tm (5. Belief Updates \(Training\)) Tj
+/F2 10 Tf
+1 0 0 1 48 612 Tm (Event) Tj
+1 0 0 1 248 612 Tm (Effect) Tj
+/F1 10 Tf
+1 0 0 1 48 596 Tm (attempt) Tj
+1 0 0 1 248 596 Tm (Updates answer + supporting props) Tj
+1 0 0 1 48 580 Tm (hint_reveal) Tj
+1 0 0 1 248 580 Tm (Increases P\(know\) for hint-linked ideas) Tj
+1 0 0 1 48 564 Tm (session_start/end) Tj
+1 0 0 1 248 564 Tm (Step session bookkeeping) Tj
+/F1 9 Tf
+1 0 0 1 48 548 Tm (Default prior P\(know\) ~ 0.1; mastery threshold 95%.) Tj
+/F2 12 Tf
+1 0 0 1 48 522 Tm (6. Prop BKT Solve Loop) Tj
+1 0 0 1 48 504 Tm (Per-step agent flow) Tj
+ET
+196 446 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 464 Tm (Ingest lesson +) Tj
+1 0 0 1 200 454 Tm (session_start) Tj
+BT
+ET
+306 440 m 306 424 l S
+BT
+ET
+196 360 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 378 Tm (Planning on?) Tj
+1 0 0 1 200 368 Tm (buildStepPlan : hint) Tj
+1 0 0 1 200 358 Tm (ranking) Tj
+BT
+ET
+306 354 m 306 338 l S
+BT
+ET
+196 274 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 292 Tm (Query gpt-oss \\\(LaTeX) Tj
+1 0 0 1 200 282 Tm (answer\\\)) Tj
+BT
+ET
+306 268 m 306 252 l S
+BT
+ET
+196 188 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 206 Tm (Correct? BKT update :) Tj
+1 0 0 1 200 196 Tm (hint fallback) Tj
+1 0 0 1 200 186 Tm (\\\(training\\\)) Tj
+BT
+ET
+306 182 m 306 166 l S
+BT
+ET
+196 102 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 120 Tm (step-complete event) Tj
+BT
+ET
+endstream
+10 0 obj<</Length 386>>stream
+BT
+/F2 12 Tf
+1 0 0 1 48 744 Tm (7. Plan C Ranking \(plan-c-v1\)) Tj
+/F1 10 Tf
+1 0 0 1 48 726 Tm (Without planning, propositions in the prerequisite closure are ranked by uncertainty,) Tj
+1 0 0 1 48 712 Tm (structural importance, and source type \(hint > step > answer\).) Tj
+/F1 9 Tf
+1 0 0 1 48 694 Tm (Priority = 0.55*uncertainty + 0.30*structure + 0.15*source - 0.5 if mastered) Tj
+ET
+endstream
+12 0 obj<</Length 1885>>stream
+BT
+/F2 12 Tf
+1 0 0 1 48 744 Tm (8. Hint Planning Module) Tj
+/F1 10 Tf
+1 0 0 1 48 726 Tm (Entry point: buildStepPlan\(propEngine, { lessonId, stepId, settings }\). Pure JavaScript  no) Tj
+1 0 0 1 48 712 Tm (LLM.) Tj
+/F2 12 Tf
+1 0 0 1 48 694 Tm (Planning pipeline) Tj
+ET
+196 636 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 654 Tm (rankPropositionsForStep) Tj
+BT
+ET
+306 630 m 306 614 l S
+BT
+ET
+196 550 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 568 Tm (selectPivotIdeas) Tj
+1 0 0 1 200 558 Tm (\\\(hint-linked first\\\)) Tj
+BT
+ET
+306 544 m 306 528 l S
+BT
+ET
+196 464 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 482 Tm (mapRelevantHints) Tj
+1 0 0 1 200 472 Tm (\\\(training pathway\\\)) Tj
+BT
+ET
+306 458 m 306 442 l S
+BT
+ET
+196 378 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 396 Tm (buildChainFromPivot) Tj
+1 0 0 1 200 386 Tm (per pivot) Tj
+BT
+ET
+306 372 m 306 356 l S
+BT
+ET
+196 292 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 310 Tm (scoreChain + sort) Tj
+BT
+/F2 12 Tf
+1 0 0 1 48 254 Tm (9. Plan Output Schema) Tj
+/F1 10 Tf
+1 0 0 1 56 236 Tm (" stepIdeas  ranked propositions \(suggest, known, pivot roles\)) Tj
+1 0 0 1 56 222 Tm (" pivots  top teachable ideas seeding distinct chains) Tj
+1 0 0 1 56 208 Tm (" relevantHints  hint texts scored by idea relevance) Tj
+1 0 0 1 56 194 Tm (" candidateChains  one scored chain per pivot toward answer) Tj
+1 0 0 1 56 180 Tm (" primaryChain  highest-scoring candidate) Tj
+/F2 12 Tf
+1 0 0 1 48 158 Tm (10. Chain Scoring \(prop-chain-v1\)) Tj
+/F1 10 Tf
+1 0 0 1 48 140 Tm (score = 0.35*readiness + 0.30*history + 0.20*graphBoost + 0.15*urgency) Tj
+/F1 9 Tf
+1 0 0 1 48 122 Tm (readiness = avg P\(know\) along chain; history = chain store success; graphBoost = reasoning) Tj
+1 0 0 1 48 108 Tm (graph transitions; urgency = unmastered non-target nodes.) Tj
+/F2 12 Tf
+1 0 0 1 48 82 Tm (11. Example Plan \(conceptual\)) Tj
+/F1 10 Tf
+1 0 0 1 48 64 Tm (Step: Find slope through \(1,2\) and \(3,8\).) Tj
+ET
+endstream
+14 0 obj<</Length 904>>stream
+BT
+/F1 10 Tf
+1 0 0 1 56 744 Tm (" Pivot 1 [42%]: Slope is rise over run.) Tj
+1 0 0 1 56 730 Tm (" Pivot 2 [38%]: Subtract y-values and x-values separately.) Tj
+1 0 0 1 56 716 Tm (" Hint 1: Slope is rise over run.) Tj
+1 0 0 1 56 702 Tm (" Chain \(0.71\): rise over run -> subtract values -> slope formula) Tj
+/F2 12 Tf
+1 0 0 1 48 680 Tm (12. Agent Integration) Tj
+/F1 10 Tf
+1 0 0 1 48 662 Tm (Phase 2  Prop BKT agent:) Tj
+1 0 0 1 56 644 Tm (" buildStepPlan per step; emit prop-plan event) Tj
+1 0 0 1 56 630 Tm (" formatStepPlanForPrompt injected into gpt-oss messages) Tj
+1 0 0 1 56 616 Tm (" Falls back to standard hint retrieval if planning fails) Tj
+1 0 0 1 48 598 Tm (Phase 3  Chain Tree agent:) Tj
+1 0 0 1 56 580 Tm (" Seeds chains from plan.candidateChains) Tj
+1 0 0 1 56 566 Tm (" Merges beam tree if fewer chains than maxAttempts) Tj
+1 0 0 1 56 552 Tm (" Existing _tryChain loop unchanged) Tj
+ET
+endstream
+16 0 obj<</Length 3792>>stream
+BT
+/F2 12 Tf
+1 0 0 1 48 744 Tm (13. Configuration) Tj
+/F2 10 Tf
+1 0 0 1 48 726 Tm (Setting) Tj
+1 0 0 1 248 726 Tm (Default) Tj
+1 0 0 1 338 726 Tm (Description) Tj
+/F1 10 Tf
+1 0 0 1 48 710 Tm (propPlanningEnabled) Tj
+1 0 0 1 248 710 Tm (false) Tj
+1 0 0 1 338 710 Tm (Master switch) Tj
+1 0 0 1 48 694 Tm (propPlanningMaxPivots) Tj
+1 0 0 1 248 694 Tm (3) Tj
+1 0 0 1 338 694 Tm (Max pivot ideas) Tj
+1 0 0 1 48 678 Tm (propPlanningMaxChains) Tj
+1 0 0 1 248 678 Tm (5) Tj
+1 0 0 1 338 678 Tm (Max candidate chains) Tj
+1 0 0 1 48 662 Tm (propPlanningMaxHints) Tj
+1 0 0 1 248 662 Tm (8) Tj
+1 0 0 1 338 662 Tm (Max relevant hints) Tj
+1 0 0 1 48 646 Tm (propPolicyMasteryThreshold) Tj
+1 0 0 1 248 646 Tm (0.95) Tj
+1 0 0 1 338 646 Tm (Mastered cutoff) Tj
+1 0 0 1 48 630 Tm (maxBeliefsInPrompt) Tj
+1 0 0 1 248 630 Tm (12) Tj
+1 0 0 1 338 630 Tm (Ideas in ranking) Tj
+/F2 12 Tf
+1 0 0 1 48 606 Tm (14. Strict No-Clue Evaluation) Tj
+/F1 10 Tf
+1 0 0 1 48 588 Tm (Training allows hint fallback on LLM failure \(inflates first-try rate\). Strict no-clue) Tj
+1 0 0 1 48 574 Tm (evaluation strips live hints  the hint plan becomes primary injected knowledge.) Tj
+/F2 10 Tf
+1 0 0 1 48 556 Tm (Mode) Tj
+1 0 0 1 248 556 Tm (Hint fallback) Tj
+1 0 0 1 338 556 Tm (Planning value) Tj
+/F1 10 Tf
+1 0 0 1 48 540 Tm (Training) Tj
+1 0 0 1 248 540 Tm (Yes) Tj
+1 0 0 1 338 540 Tm (Optional assist) Tj
+1 0 0 1 48 524 Tm (Strict eval) Tj
+1 0 0 1 248 524 Tm (No) Tj
+1 0 0 1 338 524 Tm (High  plan is main memory) Tj
+/F2 12 Tf
+1 0 0 1 48 500 Tm (15. UI Trace Events) Tj
+/F2 10 Tf
+1 0 0 1 48 482 Tm (Event) Tj
+1 0 0 1 248 482 Tm (When) Tj
+/F1 10 Tf
+1 0 0 1 48 466 Tm (prop-plan) Tj
+1 0 0 1 248 466 Tm (Plan built per step) Tj
+1 0 0 1 48 450 Tm (hint-retrieval) Tj
+1 0 0 1 248 450 Tm (Mode hint-plan or relevance) Tj
+1 0 0 1 48 434 Tm (prop-policy) Tj
+1 0 0 1 248 434 Tm (Plan C ranking \(planning off\)) Tj
+1 0 0 1 48 418 Tm (llm-response / llm-error) Tj
+1 0 0 1 248 418 Tm (gpt-oss result) Tj
+1 0 0 1 48 402 Tm (step-complete) Tj
+1 0 0 1 248 402 Tm (Final correctness) Tj
+/F2 12 Tf
+1 0 0 1 48 378 Tm (16. Agent Mode Comparison) Tj
+/F2 10 Tf
+1 0 0 1 48 360 Tm (Mode) Tj
+1 0 0 1 248 360 Tm (LLM input) Tj
+1 0 0 1 338 360 Tm (Best for) Tj
+/F1 10 Tf
+1 0 0 1 48 344 Tm (Default Prop BKT) Tj
+1 0 0 1 248 344 Tm (Flat ranking) Tj
+1 0 0 1 338 344 Tm (General training) Tj
+1 0 0 1 48 328 Tm (+ Planning) Tj
+1 0 0 1 248 328 Tm (Ideas+hints+chains) Tj
+1 0 0 1 338 328 Tm (Strict no-clue) Tj
+1 0 0 1 48 312 Tm (Prop Chain) Tj
+1 0 0 1 248 312 Tm (One chain at a time) Tj
+1 0 0 1 338 312 Tm (Chain loops) Tj
+1 0 0 1 48 296 Tm (Prop Tree) Tj
+1 0 0 1 248 296 Tm (Beam branches) Tj
+1 0 0 1 338 296 Tm (Branching reasoning) Tj
+/F2 12 Tf
+1 0 0 1 48 272 Tm (17. Key Source Files) Tj
+/F1 10 Tf
+1 0 0 1 56 254 Tm (" proposition-bkt/  standalone Prop BKT library) Tj
+1 0 0 1 56 240 Tm (" src/agent/LocalPropositionalLLMAgent.js  Prop BKT + planning) Tj
+1 0 0 1 56 226 Tm (" src/agent/LocalPropositionalChainTreeLLMAgent.js  Tree + plan seeding) Tj
+1 0 0 1 56 212 Tm (" src/agent/llm/propositionHintPlanner.js  planning module) Tj
+1 0 0 1 56 198 Tm (" src/agent/llm/propositionPolicy.js  Plan C ranking) Tj
+1 0 0 1 56 184 Tm (" src/agent/llm/propositionChainReasoning.js  chain build/score) Tj
+1 0 0 1 56 170 Tm (" src/agent/llm/llmSettings.js  planning settings) Tj
+1 0 0 1 56 156 Tm (" npm run test:planner  10 unit tests) Tj
+/F2 12 Tf
+1 0 0 1 48 134 Tm (18. Limitations) Tj
+/F1 10 Tf
+1 0 0 1 56 116 Tm (" Planning requires prior training  empty beliefs yield weak plans) Tj
+1 0 0 1 56 102 Tm (" Training hint fallback inflates first-try metrics; use strict eval) Tj
+1 0 0 1 56 88 Tm (" Quality depends on hint pathway richness and graph connectivity) Tj
+1 0 0 1 56 74 Tm (" Planner is heuristic  no semantic LLM reasoning in planning) Tj
+ET
+endstream
+18 0 obj<</Length 1186>>stream
+BT
+/F1 10 Tf
+1 0 0 1 56 744 Tm (" Linear Prop Chain agent does not use planning) Tj
+1 0 0 1 56 730 Tm (" Longer prompts increase gpt-oss latency; use timeout not max_tokens) Tj
+/F2 12 Tf
+1 0 0 1 48 708 Tm (19. Suggested Evaluation Protocol) Tj
+1 0 0 1 48 690 Tm (Benchmark workflow) Tj
+ET
+196 632 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 650 Tm (Train Prop BKT \\\(30) Tj
+1 0 0 1 200 640 Tm (problems\\\)) Tj
+BT
+ET
+306 626 m 306 610 l S
+BT
+ET
+196 546 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 564 Tm (Enable planning + save) Tj
+1 0 0 1 200 554 Tm (settings) Tj
+BT
+ET
+306 540 m 306 524 l S
+BT
+ET
+196 460 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 478 Tm (Strict no-clue eval) Tj
+1 0 0 1 200 468 Tm (\\\(held-out\\\)) Tj
+BT
+ET
+306 454 m 306 438 l S
+BT
+ET
+196 374 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 392 Tm (Compare planning on vs) Tj
+1 0 0 1 200 382 Tm (off) Tj
+BT
+ET
+306 368 m 306 352 l S
+BT
+ET
+196 288 220 32 re S
+/F1 8 Tf
+1 0 0 1 200 306 Tm (Report: accuracy, plan) Tj
+1 0 0 1 200 296 Tm (coverage, LLM errors) Tj
+BT
+/F1 8 Tf
+1 0 0 1 48 238 Tm (OATutor  Propositional Interpretability XAI. Report generated from) Tj
+1 0 0 1 48 224 Tm (propositionHintPlanner.js \(hint-plan-v1\) and @oatutor/proposition-bkt.) Tj
+ET
+endstream
+7 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 6 0 R/Resources<</Font<</F1 4 0 R/F2 5 0 R>>>>>>endobj
+9 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 8 0 R/Resources<</Font<</F1 4 0 R/F2 5 0 R>>>>>>endobj
+11 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 10 0 R/Resources<</Font<</F1 4 0 R/F2 5 0 R>>>>>>endobj
+13 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 12 0 R/Resources<</Font<</F1 4 0 R/F2 5 0 R>>>>>>endobj
+15 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 14 0 R/Resources<</Font<</F1 4 0 R/F2 5 0 R>>>>>>endobj
+17 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 16 0 R/Resources<</Font<</F1 4 0 R/F2 5 0 R>>>>>>endobj
+19 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 18 0 R/Resources<</Font<</F1 4 0 R/F2 5 0 R>>>>>>endobj
+xref
+0 19
+0000000000 65535 f 
+0000000009 00000 n 
+0000000052 00000 n 
+0000000142 00000 n 
+0000000203 00000 n 
+0000000269 00000 n 
+0000002864 00000 n 
+0000004793 00000 n 
+0000005220 00000 n 
+0000007147 00000 n 
+0000008092 00000 n 
+0000011926 00000 n 
+0000013154 00000 n 
+0000013273 00000 n 
+0000013392 00000 n 
+0000013513 00000 n 
+0000013634 00000 n 
+0000013755 00000 n 
+0000013876 00000 n 
+trailer<</Size 19/Root 1 0 R>>
+startxref
+13997
+%%EOF

@@ -1,6 +1,14 @@
 import OpenAI from "openai";
 import { DYNAMIC_HINT_URL } from "../../config/config.js";
 import { LLM_PROVIDER, getLLMSettingsSync } from "./llmSettings.js";
+import {
+    extractAnswerFromModelText,
+    parseGptOssCompletionChoice,
+} from "./llmResponseParse.js";
+import { buildGptOssSdkCreateParams } from "./gptOssRequest.js";
+
+export { extractAnswerFromModelText, resolveAssistantAnswer } from "./llmResponseParse.js";
+export { buildGptOssHttpBody, buildGptOssSdkCreateParams } from "./gptOssRequest.js";
 
 let _clientCache = null;
 let _clientKey = "";
@@ -37,30 +45,6 @@ export function resetOpenAIClient() {
     _clientKey = "";
 }
 
-function extractMessageText(message) {
-    if (!message) return "";
-    const parts = [];
-    if (message.reasoning_content) parts.push(message.reasoning_content);
-    if (message.content) {
-        if (typeof message.content === "string") {
-            parts.push(message.content);
-        } else if (Array.isArray(message.content)) {
-            message.content.forEach((block) => {
-                if (block?.type === "text" && block.text) parts.push(block.text);
-            });
-        }
-    }
-    return parts.join("\n").trim();
-}
-
-export function extractAnswerFromModelText(text) {
-    if (!text) return null;
-    const dollarMatch = text.match(/\$\$([^$]+)\$\$/);
-    if (dollarMatch) return `$$${dollarMatch[1].trim()}$$`;
-    const lines = text.trim().split("\n").filter(Boolean);
-    return lines[lines.length - 1]?.trim() || null;
-}
-
 /**
  * Non-streaming chat completion via OpenAI client (llama.cpp or cloud).
  */
@@ -79,39 +63,29 @@ export async function completeChat(messages, options = {}) {
 
         try {
             const completion = await client.chat.completions.create(
-                {
-                    model: settings.localModel || "gpt-oss-20b",
-                    messages,
-                    temperature: 1.0,
-                    top_p: 1.0,
-                    reasoning_effort: settings.reasoningEffort || "medium",
-                    extra_body: {
-                        chat_template_kwargs: {
-                            reasoning_effort: settings.reasoningEffort || "medium",
-                        },
-                    },
-                },
+                buildGptOssSdkCreateParams(settings, messages),
                 { signal: controller.signal }
             );
 
-            const message = completion.choices?.[0]?.message;
-            const content =
-                typeof message?.content === "string"
-                    ? message.content
-                    : Array.isArray(message?.content)
-                      ? message.content
-                            .filter((b) => b?.type === "text" && b.text)
-                            .map((b) => b.text)
-                            .join("\n")
-                      : "";
-            const reasoning = message?.reasoning_content || null;
-            const rawText = extractMessageText(message);
+            const choice = completion.choices?.[0];
+            const parsed = parseGptOssCompletionChoice(choice);
+
+            if (parsed.incompleteReasoning) {
+                throw new Error(
+                    "gpt-oss response truncated during reasoning (finish_reason=length); " +
+                        "final content was empty. Do not set max_tokens on reasoning models."
+                );
+            }
+
             return {
-                rawText,
-                content: content || null,
-                answer: extractAnswerFromModelText(content || rawText),
-                reasoning,
+                rawText: parsed.rawText,
+                content: parsed.content,
+                answer: parsed.answer,
+                reasoning: parsed.reasoning,
+                finishReason: parsed.finishReason,
+                truncated: parsed.truncated,
                 provider: settings.provider,
+                model: completion.model || settings.localModel,
             };
         } finally {
             clearTimeout(timer);
@@ -178,20 +152,51 @@ function queryCloudHintEndpoint(prompt, timeoutMs) {
 
 export async function probeLocalLLMServer(settings = getLLMSettingsSync()) {
     const base = (settings.localBaseUrl || "").replace(/\/$/, "");
-    const url = `${base}/models`;
+    const modelsUrl = `${base}/models`;
+    const root = base.endsWith("/v1") ? base.slice(0, -3) : base;
+    const healthUrl = `${root}/health`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
     try {
-        const res = await fetch(url, {
+        const headers = { Authorization: `Bearer ${settings.localApiKey || "not-needed"}` };
+
+        let healthOk = false;
+        try {
+            const healthRes = await fetch(healthUrl, { method: "GET", signal: controller.signal });
+            healthOk = healthRes.ok;
+        } catch {
+            healthOk = false;
+        }
+
+        const res = await fetch(modelsUrl, {
             method: "GET",
-            headers: { Authorization: `Bearer ${settings.localApiKey || "not-needed"}` },
+            headers,
             signal: controller.signal,
         });
         if (!res.ok) {
-            return { ok: false, message: `HTTP ${res.status}` };
+            return { ok: false, message: `HTTP ${res.status}`, healthOk };
         }
         const data = await res.json().catch(() => ({}));
-        return { ok: true, models: data?.data || [] };
+        const models = data?.data || [];
+        const modelIds = models.map((m) => m.id || m.name).filter(Boolean);
+        const suggestedModel = modelIds[0] || null;
+        const configuredModel = settings.localModel;
+        const modelMatch =
+            !configuredModel || modelIds.length === 0
+                ? true
+                : modelIds.includes(configuredModel);
+
+        return {
+            ok: true,
+            healthOk,
+            models,
+            modelIds,
+            suggestedModel,
+            modelMatch,
+            message: modelMatch
+                ? `Connected (${modelIds.length} model(s))`
+                : `Connected but configured model "${configuredModel}" not in [${modelIds.join(", ")}]`,
+        };
     } catch (err) {
         return { ok: false, message: err.message || "Connection failed" };
     } finally {

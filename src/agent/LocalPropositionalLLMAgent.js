@@ -29,6 +29,21 @@ import {
     buildLLMStepSnapshot,
     getExpectedAnswerDisplay,
 } from "./llm/llmStepTrace.js";
+import {
+    buildStepPlan,
+    formatStepPlanForPrompt,
+    isPropPlanningEnabled,
+    summarizePlanForEvent,
+    PROP_PLANNING_MODE,
+} from "./llm/propositionHintPlanner.js";
+import {
+    isFullPathwayTrainingMode,
+    resolvePropTrainingHintMode,
+    resolveTrainingAnswer,
+    selectNextTrainingHint,
+    summarizeTrainingRevealForEvent,
+    TRAINING_PATH_VERSION,
+} from "./llm/propositionTrainingPath.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -49,6 +64,7 @@ export default class LocalPropositionalLLMAgent extends BaseAgent {
         this._evaluationMode = false;
         this._currentStepPolicy = null;
         this._currentHintRetrieval = null;
+        this._currentStepPlan = null;
         this.llmSettings = options.llmSettings || getLLMSettingsSync();
     }
 
@@ -211,6 +227,59 @@ export default class LocalPropositionalLLMAgent extends BaseAgent {
         return this.propEngine.getBeliefDeltas();
     }
 
+    _isPlanningEnabled() {
+        const settings = getLLMSettingsSync();
+        this.llmSettings = settings;
+        return isPropPlanningEnabled(settings, this.agentType);
+    }
+
+    _buildStepPlan(step) {
+        const settings = getLLMSettingsSync();
+        this.llmSettings = settings;
+        return buildStepPlan(this.propEngine, {
+            lessonId: this.lesson.id,
+            stepId: step.id,
+            settings,
+            reasoningGraph: this.reasoningGraph,
+        });
+    }
+
+    _applyStepPlan(step, settings) {
+        try {
+            this._currentStepPlan = this._buildStepPlan(step);
+            this._emit("prop-plan", summarizePlanForEvent(this._currentStepPlan, {
+                agentType: this.agentType,
+                strictNoClues: this._strictNoClues,
+            }));
+            this._emit("hint-retrieval", {
+                stepId: step.id,
+                agentType: this.agentType,
+                hintRetrievalMode: PROP_PLANNING_MODE,
+                hintRetrievalLabel: "Hint planning (trained beliefs)",
+            });
+            return true;
+        } catch (err) {
+            console.error("Hint planning failed; falling back to proposition hints", err);
+            this._currentStepPlan = null;
+            this._currentHintRetrieval = buildPropHintPrompt(this.propEngine, {
+                lessonId: this.lesson.id,
+                stepId: step.id,
+                settings,
+            });
+            this._emit("llm-error", {
+                stepId: step.id,
+                message: `Hint planning failed (${err.message || "unknown"}); using standard hint retrieval.`,
+            });
+            this._emit("hint-retrieval", {
+                stepId: step.id,
+                agentType: this.agentType,
+                hintRetrievalMode: this._currentHintRetrieval.mode,
+                hintRetrievalLabel: this._currentHintRetrieval.modeLabel,
+            });
+            return false;
+        }
+    }
+
     _buildStepPolicy(step) {
         const settings = this.llmSettings || getLLMSettingsSync();
         const mode = resolvePropHintMode(settings);
@@ -227,6 +296,38 @@ export default class LocalPropositionalLLMAgent extends BaseAgent {
     _buildMessages(step, problem) {
         const settings = this.llmSettings || getLLMSettingsSync();
         const skills = cleanArray(step.knowledgeComponents || []);
+
+        if (this._currentStepPlan) {
+            const plan = this._currentStepPlan;
+            const promptBlock = formatStepPlanForPrompt(plan);
+            this._currentHintRetrieval = {
+                mode: PROP_PLANNING_MODE,
+                modeLabel: "Hint planning (trained beliefs)",
+                promptBlock,
+                plan,
+            };
+
+            const systemContent =
+                "You are a math tutoring agent solving without live hints. " +
+                "Use the hint plan below: pivot ideas show what to think about, relevant hints summarize " +
+                "training knowledge, and candidate chains show ordered reasoning paths. " +
+                "Respond with ONLY the final answer in LaTeX wrapped in $$...$$ with no explanation.";
+
+            const userContent =
+                `Hint plan (skills: ${skills.join(", ") || "general"}):\n` +
+                `${promptBlock}\n\n` +
+                `Problem title: ${problem.title || ""}\n` +
+                `Problem body: ${problem.body || ""}\n` +
+                `Step: ${step.stepTitle || ""}\n` +
+                `Step body: ${step.stepBody || ""}\n\n` +
+                "Final answer:";
+
+            return [
+                { role: "system", content: systemContent },
+                { role: "user", content: userContent },
+            ];
+        }
+
         const retrieval =
             this._currentHintRetrieval ||
             buildPropHintPrompt(this.propEngine, {
@@ -295,22 +396,144 @@ export default class LocalPropositionalLLMAgent extends BaseAgent {
         /* Hint reveals emitted in _learnFromHints with proposition-BKT events. */
     }
 
-    async _learnFromHints(step, problem, seed, run) {
-        const pathway = this._resolveHintPathway(step);
+    _revealTrainingHint(step, hint, pathwayIndex) {
+        this._processPropHintReveal(step, hint, pathwayIndex);
+        if (this.reasoningSession) {
+            this.reasoningSession.visitHint(hint, step.id, pathwayIndex);
+        }
+    }
+
+    /** Hook for Chain agent to record partial pathway chains. */
+    _onTrainingHintRevealed(step, hint, pathwayIndex, selection, revealedPathway) {
+        void step;
+        void hint;
+        void pathwayIndex;
+        void selection;
+        void revealedPathway;
+    }
+
+    _onTrainingPathwayComplete(step, revealedPathway) {
+        void step;
+        void revealedPathway;
+    }
+
+    async _learnFromHintsFullPathway(step, problem, seed, run, pathway) {
         run.hintsConsumed += pathway.length;
 
         for (let i = 0; i < pathway.length; i++) {
             const hint = pathway[i];
-            this._processPropHintReveal(step, hint, i);
-            if (this.reasoningSession) {
-                this.reasoningSession.visitHint(hint, step.id, i);
-            }
+            this._revealTrainingHint(step, hint, i);
+            this._onTrainingHintRevealed(step, hint, i, { reason: "full-pathway" }, pathway.slice(0, i + 1));
             await sleep(this.stepDelayMs / 3);
             if (this.cancelled) return null;
         }
 
+        this._onTrainingPathwayComplete(step, pathway);
+        const settings = this.llmSettings || getLLMSettingsSync();
         const learned = this._getAnswerFromHints(pathway);
-        return learned?.answer || step.stepAnswer?.[0] || null;
+        return (
+            learned?.answer ||
+            (settings.propTrainingAllowAnswerKey !== false ? step.stepAnswer?.[0] : null) ||
+            null
+        );
+    }
+
+    async _learnFromHintsWritePath(step, problem, seed, run) {
+        const settings = this.llmSettings || getLLMSettingsSync();
+        const pathway = this._resolveHintPathway(step);
+        const revealed = new Set();
+        const maxHints = settings.propTrainingMaxHintsPerStep ?? 8;
+        const retryLlm = settings.propTrainingRetryLlm !== false;
+        let attempt = null;
+        let hintsRevealed = 0;
+
+        this._emit("prop-training-start", {
+            stepId: step.id,
+            trainingMode: resolvePropTrainingHintMode(settings),
+            trainingPathVersion: TRAINING_PATH_VERSION,
+            pathwayLength: pathway.length,
+            retryLlm,
+        });
+
+        while (hintsRevealed < maxHints && revealed.size < pathway.length) {
+            if (this.cancelled) return attempt;
+
+            const selection = selectNextTrainingHint(this.propEngine, {
+                lessonId: this.lesson.id,
+                stepId: step.id,
+                pathway,
+                revealedHintIds: revealed,
+                settings,
+            });
+            if (!selection?.hint) break;
+
+            const { hint, pathwayIndex } = selection;
+            this._revealTrainingHint(step, hint, pathwayIndex);
+            revealed.add(hint.id);
+            hintsRevealed += 1;
+            run.hintsConsumed += 1;
+
+            const revealedPathway = pathway.filter((h) => revealed.has(h.id));
+            this._onTrainingHintRevealed(step, hint, pathwayIndex, selection, revealedPathway);
+            this._emit("prop-training-hint", {
+                stepId: step.id,
+                ...summarizeTrainingRevealForEvent(selection, { hintsRevealedTotal: hintsRevealed }),
+            });
+
+            if (isPropPlanningEnabled(settings, this.agentType)) {
+                this._applyStepPlan(step, settings);
+            }
+
+            await sleep(this.stepDelayMs / 3);
+            if (this.cancelled) return attempt;
+
+            if (!retryLlm) continue;
+
+            const llmResult = await this._queryLLM(step, problem);
+            attempt = llmResult?.parsedAttempt ?? null;
+            const retryCorrect = attempt ? this._checkStepAnswer(step, attempt, seed) : false;
+
+            this._emit("prop-training-retry", {
+                stepId: step.id,
+                attempt: attempt?.slice(0, 120) || null,
+                isCorrect: retryCorrect,
+                hintsRevealed,
+            });
+
+            if (retryCorrect) {
+                this._recordReasoningAction("llm-response", attempt.slice(0, 50));
+                this._emit("llm-response", {
+                    stepId: step.id,
+                    attempt,
+                    rawText: llmResult?.rawText,
+                    reasoning: llmResult?.reasoning,
+                    content: llmResult?.content,
+                    provider: "local-gpt-oss",
+                    source: "prop-training-retry",
+                });
+                this._onTrainingPathwayComplete(step, revealedPathway);
+                return attempt;
+            }
+        }
+
+        const revealedPathway = pathway.filter((h) => revealed.has(h.id));
+        this._onTrainingPathwayComplete(step, revealedPathway);
+
+        const fromHints = resolveTrainingAnswer(pathway, revealed, step, settings);
+        if (fromHints) return fromHints;
+
+        return attempt;
+    }
+
+    async _learnFromHints(step, problem, seed, run) {
+        const settings = this.llmSettings || getLLMSettingsSync();
+        const pathway = this._resolveHintPathway(step);
+
+        if (isFullPathwayTrainingMode(settings)) {
+            return this._learnFromHintsFullPathway(step, problem, seed, run, pathway);
+        }
+
+        return this._learnFromHintsWritePath(step, problem, seed, run);
     }
 
     async _solveStep(step, problem, seed, run) {
@@ -325,21 +548,32 @@ export default class LocalPropositionalLLMAgent extends BaseAgent {
         });
 
         this._currentStepPolicy = this._buildStepPolicy(step);
-        this._currentHintRetrieval = buildPropHintPrompt(this.propEngine, {
-            lessonId: this.lesson.id,
-            stepId: step.id,
-            settings: this.llmSettings || getLLMSettingsSync(),
-        });
+        const settings = this.llmSettings || getLLMSettingsSync();
+        this.llmSettings = settings;
+
+        const planningRequested = isPropPlanningEnabled(settings, this.agentType);
+        if (planningRequested) {
+            this._applyStepPlan(step, settings);
+        } else {
+            this._currentStepPlan = null;
+            this._currentHintRetrieval = buildPropHintPrompt(this.propEngine, {
+                lessonId: this.lesson.id,
+                stepId: step.id,
+                settings,
+            });
+        }
 
         this._startStepReasoning(step, problem);
         this._emit("step-start", { stepId: step.id, problemId: problem.id, skills });
-        this._emit("hint-retrieval", {
-            stepId: step.id,
-            agentType: this.agentType,
-            hintRetrievalMode: this._currentHintRetrieval.mode,
-            hintRetrievalLabel: this._currentHintRetrieval.modeLabel,
-        });
-        if (this._currentStepPolicy) {
+        if (!planningRequested) {
+            this._emit("hint-retrieval", {
+                stepId: step.id,
+                agentType: this.agentType,
+                hintRetrievalMode: this._currentHintRetrieval.mode,
+                hintRetrievalLabel: this._currentHintRetrieval.modeLabel,
+            });
+        }
+        if (this._currentStepPolicy && !this._currentStepPlan) {
             this._emit("prop-policy", {
                 stepId: step.id,
                 policyVersion: POLICY_VERSION,
@@ -441,14 +675,27 @@ export default class LocalPropositionalLLMAgent extends BaseAgent {
             llmAfter,
             expectedAnswer: getExpectedAnswerDisplay(step, seed),
             propBeliefDeltas,
-            propPolicySuggestion: this._currentStepPolicy?.primarySuggestion || null,
-            policyVersion: POLICY_VERSION,
+            propPolicySuggestion:
+                this._currentStepPlan?.pivots?.[0]
+                    ? {
+                          id: this._currentStepPlan.pivots[0].id,
+                          text: this._currentStepPlan.pivots[0].text,
+                          probMastery: this._currentStepPlan.pivots[0].probMastery,
+                          reason: "hint-plan pivot",
+                      }
+                    : this._currentStepPolicy?.primarySuggestion || null,
+            policyVersion: this._isPlanningEnabled()
+                ? this._currentStepPlan?.planVersion
+                : POLICY_VERSION,
+            hintPlanning: this._isPlanningEnabled(),
+            planVersion: this._currentStepPlan?.planVersion || null,
             hintRetrievalMode: this._currentHintRetrieval?.mode,
             hintRetrievalLabel: this._currentHintRetrieval?.modeLabel,
             bktMode: "proposition",
             strictNoClues: this._strictNoClues,
         });
         this._currentStepPolicy = null;
+        this._currentStepPlan = null;
         this._currentHintRetrieval = null;
         await sleep(this.stepDelayMs);
         return isCorrect;
@@ -510,6 +757,10 @@ export default class LocalPropositionalLLMAgent extends BaseAgent {
             bktMode: "proposition",
             policyVersion: POLICY_VERSION,
             propHintRetrieval: resolvePropHintMode(settings),
+            propPlanningEnabled: this._isPlanningEnabled(),
+            propTrainingHintMode: resolvePropTrainingHintMode(settings),
+            propTrainingRetryLlm: settings.propTrainingRetryLlm !== false,
+            trainingPathVersion: TRAINING_PATH_VERSION,
             provider: settings.provider,
             localBaseUrl: settings.localBaseUrl,
             localModel: settings.localModel,

@@ -12,6 +12,8 @@ import {
     TextField,
     Typography,
     Chip,
+    FormControlLabel,
+    Checkbox,
 } from "@material-ui/core";
 import SettingsIcon from "@material-ui/icons/Settings";
 import ExpandMoreIcon from "@material-ui/icons/ExpandMore";
@@ -21,6 +23,7 @@ import {
     LLM_PROVIDER,
     SKILL_HINT_MODES,
     PROP_HINT_MODES,
+    PROP_TRAINING_HINT_MODES,
     SKILL_BKT_BACKEND,
     loadLLMSettings,
     saveLLMSettings,
@@ -30,6 +33,7 @@ import {
     SKILL_HINT_MODE_META,
     PROP_HINT_MODE_META,
 } from "../../agent/llm/beliefRetrieval.js";
+import { PROP_TRAINING_HINT_MODE_META } from "../../agent/llm/propositionTrainingPath.js";
 import { probeLocalLLMServer, resetOpenAIClient } from "../../agent/llm/llmClient.js";
 
 class LLMSettingsPanel extends React.Component {
@@ -66,24 +70,58 @@ class LLMSettingsPanel extends React.Component {
         if (field === "requestTimeoutMs" || field === "maxBeliefsInPrompt") {
             value = Number(value) || DEFAULT_LLM_SETTINGS[field];
         }
+        if (
+            field === "propPlanningMaxPivots" ||
+            field === "propPlanningMaxChains" ||
+            field === "propPlanningMaxHints" ||
+            field === "propTrainingMaxHintsPerStep"
+        ) {
+            value = Number(value) || DEFAULT_LLM_SETTINGS[field];
+        }
         this.setState((prev) => ({
             settings: { ...prev.settings, [field]: value },
             savedMessage: null,
         }));
     };
 
-    handleSave = async () => {
+    handleCheckboxChange = (field) => (event) => {
+        event.stopPropagation();
+        const value = event.target.checked;
+        this.setState(
+            (prev) => ({
+                settings: { ...prev.settings, [field]: value },
+                savedMessage: null,
+            }),
+            () => {
+                if (field === "propPlanningEnabled") {
+                    this.persistSettings(`Hint planning ${value ? "enabled" : "disabled"}.`);
+                }
+            }
+        );
+    };
+
+    persistSettings = async (successMessage = "Settings saved.") => {
         const { browserStorage, onSettingsChange } = this.props;
         const { settings } = this.state;
-        const merged = await saveLLMSettings(browserStorage, settings);
         try {
-            localStorage.setItem("oatutor-llm-settings", JSON.stringify(merged));
-        } catch {
-            /* ignore */
+            const merged = await saveLLMSettings(browserStorage, settings);
+            try {
+                localStorage.setItem("oatutor-llm-settings", JSON.stringify(merged));
+            } catch {
+                /* ignore */
+            }
+            resetOpenAIClient();
+            this.setState({ settings: merged, savedMessage: successMessage });
+            onSettingsChange?.(merged);
+        } catch (err) {
+            this.setState({
+                savedMessage: `Could not save settings: ${err.message || "unknown error"}`,
+            });
         }
-        resetOpenAIClient();
-        this.setState({ settings: merged, savedMessage: "Settings saved." });
-        onSettingsChange?.(merged);
+    };
+
+    handleSave = async () => {
+        await this.persistSettings("Settings saved.");
     };
 
     handleReset = () => {
@@ -106,10 +144,18 @@ class LLMSettingsPanel extends React.Component {
         const { settings } = this.state;
         this.setState({ probing: true, probeStatus: null });
         const result = await probeLocalLLMServer(settings);
+        let nextSettings = settings;
+        if (result.ok && result.suggestedModel && !result.modelMatch) {
+            nextSettings = { ...settings, localModel: result.suggestedModel };
+        }
         this.setState({
             probing: false,
+            settings: nextSettings,
             probeStatus: result.ok
-                ? { ok: true, text: `Connected (${result.models?.length || 0} model(s) listed)` }
+                ? {
+                      ok: result.modelMatch !== false,
+                      text: result.message || `Connected (${result.modelIds?.length || 0} model(s))`,
+                  }
                 : { ok: false, text: result.message || "Unreachable" },
         });
     };
@@ -146,10 +192,10 @@ class LLMSettingsPanel extends React.Component {
 
                 <Collapse in={open}>
                     <Typography variant="body2" color="textSecondary" paragraph style={{ marginTop: 12 }}>
-                        Configure the local gpt-oss-20b server (llama.cpp OpenAI API at{" "}
-                        <code>http://127.0.0.1:8080/v1</code>) or fall back to the cloud GPT-4 hint
-                        endpoint. Start the server with{" "}
-                        <code>./scripts/serve-gpt-oss-20b-gpu.sh</code> from the Projects folder.
+                        Configure gpt-oss on llama.cpp (OpenAI-compatible API). Reasoning
+                        effort is sent via <code>chat_template_kwargs</code> (requires server{" "}
+                        <code>--jinja</code>). Do not cap <code>max_tokens</code> — reasoning
+                        models emit <code>reasoning_content</code> then <code>content</code>.
                     </Typography>
 
                     <Grid container spacing={2}>
@@ -219,6 +265,7 @@ class LLMSettingsPanel extends React.Component {
                                         type="number"
                                         value={settings.requestTimeoutMs}
                                         onChange={this.handleChange("requestTimeoutMs")}
+                                        helperText="Wall-clock limit per LLM call"
                                     />
                                 </Grid>
                                 <Grid item xs={12} sm={4}>
@@ -327,6 +374,144 @@ class LLMSettingsPanel extends React.Component {
                                                 ?.description || ""}
                                         </Typography>
                                     </FormControl>
+                                </Grid>
+
+                                <Grid item xs={12}>
+                                    <Typography variant="subtitle2" style={{ marginTop: 4 }}>
+                                        Hint planning (Prop BKT + Tree agents)
+                                    </Typography>
+                                    <Typography variant="caption" color="textSecondary" display="block">
+                                        When enabled, the planner suggests pivot ideas, relevant trained
+                                        hints, and one chain per pivot — especially for strict no-clue
+                                        evaluation.
+                                    </Typography>
+                                </Grid>
+                                <Grid item xs={12}>
+                                    <FormControlLabel
+                                        control={
+                                            <Checkbox
+                                                checked={!!settings.propPlanningEnabled}
+                                                onChange={this.handleCheckboxChange("propPlanningEnabled")}
+                                                onClick={(e) => e.stopPropagation()}
+                                                color="primary"
+                                            />
+                                        }
+                                        label="Enable hint planning module"
+                                        onClick={(e) => e.stopPropagation()}
+                                    />
+                                    <Typography variant="caption" color="textSecondary" display="block">
+                                        Applies to Propositional BKT and Prop BKT Chain Tree agents.
+                                        Saves immediately when toggled — then train one of those agents.
+                                    </Typography>
+                                </Grid>
+                                {settings.propPlanningEnabled ? (
+                                    <>
+                                        <Grid item xs={12} sm={4}>
+                                            <TextField
+                                                fullWidth
+                                                size="small"
+                                                variant="outlined"
+                                                label="Max pivot ideas"
+                                                type="number"
+                                                value={settings.propPlanningMaxPivots ?? 3}
+                                                onChange={this.handleChange("propPlanningMaxPivots")}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12} sm={4}>
+                                            <TextField
+                                                fullWidth
+                                                size="small"
+                                                variant="outlined"
+                                                label="Max chains per step"
+                                                type="number"
+                                                value={settings.propPlanningMaxChains ?? 5}
+                                                onChange={this.handleChange("propPlanningMaxChains")}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12} sm={4}>
+                                            <TextField
+                                                fullWidth
+                                                size="small"
+                                                variant="outlined"
+                                                label="Max relevant hints"
+                                                type="number"
+                                                value={settings.propPlanningMaxHints ?? 8}
+                                                onChange={this.handleChange("propPlanningMaxHints")}
+                                            />
+                                        </Grid>
+                                    </>
+                                ) : null}
+
+                                <Grid item xs={12}>
+                                    <Typography variant="subtitle2" style={{ marginTop: 4 }}>
+                                        Training write path (Prop BKT + Chain + Tree)
+                                    </Typography>
+                                    <Typography variant="caption" color="textSecondary" display="block">
+                                        How hints are revealed when the LLM fails during training.
+                                        Planner-guided reveals targeted hints and retries the LLM as beliefs update.
+                                    </Typography>
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <FormControl fullWidth variant="outlined" size="small">
+                                        <InputLabel>Training hint reveal</InputLabel>
+                                        <Select
+                                            value={
+                                                settings.propTrainingHintMode ||
+                                                PROP_TRAINING_HINT_MODES.PLANNER_GUIDED
+                                            }
+                                            onChange={this.handleChange("propTrainingHintMode")}
+                                            label="Training hint reveal"
+                                        >
+                                            {Object.values(PROP_TRAINING_HINT_MODES).map((mode) => (
+                                                <MenuItem key={mode} value={mode}>
+                                                    {PROP_TRAINING_HINT_MODE_META[mode]?.label || mode}
+                                                </MenuItem>
+                                            ))}
+                                        </Select>
+                                        <Typography variant="caption" color="textSecondary">
+                                            {PROP_TRAINING_HINT_MODE_META[settings.propTrainingHintMode]
+                                                ?.description || ""}
+                                        </Typography>
+                                    </FormControl>
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <TextField
+                                        fullWidth
+                                        size="small"
+                                        variant="outlined"
+                                        label="Max hints per step (partial modes)"
+                                        type="number"
+                                        value={settings.propTrainingMaxHintsPerStep ?? 8}
+                                        onChange={this.handleChange("propTrainingMaxHintsPerStep")}
+                                    />
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <FormControlLabel
+                                        control={
+                                            <Checkbox
+                                                checked={settings.propTrainingRetryLlm !== false}
+                                                onChange={this.handleCheckboxChange("propTrainingRetryLlm")}
+                                                onClick={(e) => e.stopPropagation()}
+                                                color="primary"
+                                            />
+                                        }
+                                        label="Retry LLM after each revealed hint"
+                                        onClick={(e) => e.stopPropagation()}
+                                    />
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <FormControlLabel
+                                        control={
+                                            <Checkbox
+                                                checked={settings.propTrainingAllowAnswerKey !== false}
+                                                onChange={this.handleCheckboxChange("propTrainingAllowAnswerKey")}
+                                                onClick={(e) => e.stopPropagation()}
+                                                color="primary"
+                                            />
+                                        }
+                                        label="Allow step answer key fallback"
+                                        onClick={(e) => e.stopPropagation()}
+                                    />
                                 </Grid>
                             </>
                         )}

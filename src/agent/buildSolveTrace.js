@@ -18,6 +18,16 @@ function formatTimelineEvent(event) {
             return event.primarySuggestion?.text
                 ? `The agent focused on this idea: "${truncate(event.primarySuggestion.text)}"`
                 : "The agent ranked tutoring ideas for this step using proposition beliefs.";
+        case "prop-plan":
+            return `Hint plan: ${event.pivotCount ?? 0} pivot idea(s), ${event.hintCount ?? 0} relevant hint(s), ${event.chainCount ?? 0} chain branch(es)${
+                event.strictNoClues ? " (strict no-clue)" : ""
+            }.`;
+        case "prop-training-start":
+            return `Training write path started (${event.trainingMode || "planner-guided"}, ${event.pathwayLength ?? 0} hints in pathway).`;
+        case "prop-training-hint":
+            return `Training revealed hint ${event.hintsRevealedTotal ?? "?"}: ${event.reason || "reveal"} (${event.hintId || "?"})`;
+        case "prop-training-retry":
+            return `LLM retry after ${event.hintsRevealed ?? 0} training hint(s): ${event.isCorrect ? "correct" : "incorrect"}.`;
         case "prop-chain-candidates":
             return `The agent ranked ${event.chains?.length || 0} reasoning chain(s)${
                 event.strictNoClues ? " (strict no-clue test)" : ""
@@ -67,6 +77,7 @@ export function buildSolveTrace(problem, run, sessionReasoning = null) {
             const complete = stepEvents.find((e) => e.type === "step-complete");
             const llmResponse = stepEvents.find((e) => e.type === "llm-response");
             const propPolicyEvent = stepEvents.find((e) => e.type === "prop-policy");
+            const propPlanEvent = stepEvents.find((e) => e.type === "prop-plan");
             const chainCandidatesEvent =
                 stepEvents.find((e) => e.type === "prop-chain-tree-candidates") ||
                 stepEvents.find((e) => e.type === "prop-chain-candidates");
@@ -104,8 +115,14 @@ export function buildSolveTrace(problem, run, sessionReasoning = null) {
                     : null,
                 propBeliefDeltas: complete?.propBeliefDeltas || null,
                 propPolicySuggestion:
-                    complete?.propPolicySuggestion || propPolicyEvent?.primarySuggestion || null,
-                policyVersion: complete?.policyVersion || null,
+                    complete?.propPolicySuggestion ||
+                    propPlanEvent?.primarySuggestion ||
+                    propPolicyEvent?.primarySuggestion ||
+                    null,
+                policyVersion: complete?.policyVersion || propPlanEvent?.planVersion || null,
+                hintPlanning: complete?.hintPlanning ?? !!propPlanEvent,
+                planVersion: complete?.planVersion || propPlanEvent?.planVersion || null,
+                propPlan: propPlanEvent || null,
                 hintRetrievalMode:
                     complete?.hintRetrievalMode || hintRetrievalEvent?.hintRetrievalMode || null,
                 hintRetrievalLabel:
