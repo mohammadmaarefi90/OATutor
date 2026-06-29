@@ -28,6 +28,10 @@ function formatTimelineEvent(event) {
             return `Training revealed hint ${event.hintsRevealedTotal ?? "?"}: ${event.reason || "reveal"} (${event.hintId || "?"})`;
         case "prop-training-retry":
             return `LLM retry after ${event.hintsRevealed ?? 0} training hint(s): ${event.isCorrect ? "correct" : "incorrect"}.`;
+        case "prop-aps-ingest":
+            return `APS segmentation applied (${event.mode || "heuristic"}): ${event.stepsProcessed ?? 0} steps, ${event.totalStepProps ?? 0} step props, ${event.totalHintProps ?? 0} hint props. No fine-tuning required.`;
+        case "prop-aps-attempt":
+            return `Attempt aligned to ${event.matchedCount ?? 0} lesson proposition(s) via APS overlap.`;
         case "prop-chain-candidates":
             return `The agent ranked ${event.chains?.length || 0} reasoning chain(s)${
                 event.strictNoClues ? " (strict no-clue test)" : ""

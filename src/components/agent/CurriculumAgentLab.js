@@ -33,6 +33,11 @@ import CrossLessonOrchestrator, {
     loadCurriculumCheckpoint,
     loadCurriculumReport,
 } from "../../agent/CrossLessonOrchestrator.js";
+import {
+    buildTrainingUnits,
+    getPendingTrainingUnits,
+    isTrainingProgressComplete,
+} from "../../agent/curriculumCheckpoint.js";
 import { buildCurriculumSplit, SPLIT_MODES } from "../../agent/curriculumSplit.js";
 import {
     AGENT_TYPES,
@@ -88,7 +93,16 @@ class CurriculumAgentLab extends React.Component {
     }
 
     getActiveAgentTypes() {
-        return this.state.pipelineAgentTypes || ALL_AGENT_TYPES;
+        const types = this.state.pipelineAgentTypes;
+        return types?.length ? types : ALL_AGENT_TYPES;
+    }
+
+    resolveActiveAgentTab(agentTypes = this.getActiveAgentTypes()) {
+        const types = agentTypes?.length ? agentTypes : ALL_AGENT_TYPES;
+        if (types.includes(this.state.activeAgentTab)) {
+            return this.state.activeAgentTab;
+        }
+        return types[0];
     }
 
     componentDidMount() {
@@ -129,13 +143,17 @@ class CurriculumAgentLab extends React.Component {
         if (saved) {
             try {
                 const clean = buildStorableCurriculumReport(saved) || saved;
-                const savedAgents = Object.keys(clean?.testEvaluation?.summary?.agents || {});
+                const savedAgents = Object.keys(clean?.testEvaluation?.summary?.agents || {}).filter(
+                    (t) => AGENT_META[t]
+                );
+                const pipelineAgentTypes =
+                    savedAgents.length > 0 ? savedAgents : ALL_AGENT_TYPES;
                 this.setState({
-                    report: clean,
+                    report: this.normalizeReportInState(clean) || clean,
                     reportSavedAt: clean.timestamp,
                     events: [],
-                    pipelineAgentTypes:
-                        savedAgents.length > 0 ? savedAgents : ALL_AGENT_TYPES,
+                    pipelineAgentTypes,
+                    activeAgentTab: pipelineAgentTypes[0],
                     splitPreview: clean.split
                         ? { ...clean.split, stats: clean.split.stats, testProblems: clean.testProblems }
                         : null,
@@ -158,7 +176,10 @@ class CurriculumAgentLab extends React.Component {
                     checkpoint,
                     splitMode: checkpoint.split?.mode || SPLIT_MODES.HOLDOUT_RATIO,
                     testPerLesson: checkpoint.split?.testPerLesson ?? 3,
-                    testRatio: checkpoint.split?.testRatio ?? 0.2,
+                    testRatio:
+                        checkpoint.split && "testRatio" in checkpoint.split
+                            ? checkpoint.split.testRatio
+                            : 0.2,
                     trainingProgress: checkpoint.progress || null,
                 },
                 this.refreshSplitPreview
@@ -180,12 +201,28 @@ class CurriculumAgentLab extends React.Component {
             next.trainingProgress = event.progress;
             next.progressLabel = event.currentLabel || this.state.progressLabel;
         }
+        if (event.type === "train-problem-progress") {
+            next.progressLabel = `Train problem ${event.completed}/${event.total} in current lesson`;
+        }
         if (event.type === "curriculum-checkpoint-saved") {
             next.checkpoint = event.checkpoint;
         }
         if (event.type === "curriculum-interrupted" || event.type === "curriculum-training-paused") {
             next.checkpoint = event.checkpoint || this.state.checkpoint;
             next.phase = "paused";
+        }
+        if (event.type === "curriculum-resume-error") {
+            next.copyMessage = event.message || "Resume failed.";
+            next.phase = "paused";
+        }
+        if (event.type === "curriculum-training-skip") {
+            next.phase = "testing";
+            next.progressLabel = "Starting test phase…";
+        }
+        if (event.type === "curriculum-complete") {
+            next.checkpoint = null;
+            next.trainingProgress = null;
+            next.phase = "done";
         }
 
         this.setState(next);
@@ -219,6 +256,16 @@ class CurriculumAgentLab extends React.Component {
                 return event.progress
                     ? `Progress: ${event.progress.completedUnits}/${event.progress.totalUnits} lesson jobs (${event.progress.percent}%)`
                     : "Progress updated";
+            case "train-problem-progress":
+                return `Training problem ${event.completed}/${event.total} in current lesson${event.problemTitle ? `: ${event.problemTitle.slice(0, 40)}` : ""}`;
+            case "curriculum-lesson-train-reconciled":
+                return `[${AGENT_META[event.agentType]?.shortLabel || event.agentType}] ${event.lessonTopics || event.lessonId}: reconciled (all train problems already complete)`;
+            case "curriculum-lesson-train-error":
+                return `[${AGENT_META[event.agentType]?.shortLabel || event.agentType}] ${event.lessonTopics || event.lessonId}: ${event.message || "training error"}`;
+            case "curriculum-training-skip":
+                return "=== All training complete — starting test phase ===";
+            case "pipeline-error":
+                return event.label || `=== Error: ${event.message || "unknown"} ===`;
             case "curriculum-interrupted":
                 return "=== Training interrupted — checkpoint saved. You can resume or export a backup. ===";
             case "curriculum-training-paused":
@@ -233,8 +280,28 @@ class CurriculumAgentLab extends React.Component {
     canResumeTraining = () => {
         const { checkpoint, running } = this.state;
         if (running || !checkpoint) return false;
-        const split = this.state.report?.split || this.state.splitPreview;
-        return canResumeCheckpoint(checkpoint, { split });
+        return canResumeCheckpoint(checkpoint, {
+            agentTypes: checkpoint.agentTypes,
+            split: checkpoint.split,
+        });
+    };
+
+    canContinueToTestFromCheckpoint = () => {
+        const { checkpoint, running } = this.state;
+        if (running || !checkpoint) return false;
+        return isTrainingProgressComplete(checkpoint);
+    };
+
+    getCheckpointPendingUnits = () => {
+        const { checkpoint } = this.state;
+        if (!checkpoint?.split?.trainByLesson || !checkpoint.agentTypes?.length) return [];
+        const { lessons } = this.props;
+        const units = buildTrainingUnits(
+            checkpoint.agentTypes,
+            lessons,
+            checkpoint.split.trainByLesson
+        );
+        return getPendingTrainingUnits(units, checkpoint.completedUnits);
     };
 
     reloadCheckpoint = async () => {
@@ -246,7 +313,10 @@ class CurriculumAgentLab extends React.Component {
                 checkpoint,
                 splitMode: checkpoint.split?.mode || this.state.splitMode,
                 testPerLesson: checkpoint.split?.testPerLesson ?? this.state.testPerLesson,
-                testRatio: checkpoint.split?.testRatio ?? this.state.testRatio,
+                testRatio:
+                    checkpoint.split && "testRatio" in checkpoint.split
+                        ? checkpoint.split.testRatio
+                        : this.state.testRatio,
                 trainingProgress: checkpoint.progress || null,
             });
         }
@@ -263,6 +333,22 @@ class CurriculumAgentLab extends React.Component {
         const { checkpoint } = this.state;
         if (!checkpoint?.agentTypes?.length) return;
 
+        if (!this.canResumeTraining()) {
+            this.setState((prev) => ({
+                copyMessage:
+                    "Cannot resume: checkpoint is incompatible or already complete. Try Run Test Set Only.",
+                events: [
+                    ...prev.events.slice(-199),
+                    {
+                        type: "curriculum-resume-error",
+                        label: "=== Cannot resume checkpoint — try Run Test Set Only ===",
+                        timestamp: Date.now(),
+                    },
+                ],
+            }));
+            return;
+        }
+
         const splitOptions = checkpoint.splitOptions || {
             mode: checkpoint.split?.mode,
             testRatio: checkpoint.split?.testRatio,
@@ -270,9 +356,19 @@ class CurriculumAgentLab extends React.Component {
             seed: checkpoint.split?.seed,
         };
 
+        if (isTrainingProgressComplete(checkpoint)) {
+            await this.runPipelineForAgents(checkpoint.agentTypes, {
+                splitOptions,
+                testOnly: true,
+                checkpoint,
+            });
+            return;
+        }
+
         await this.runPipelineForAgents(checkpoint.agentTypes, {
             splitOptions,
             resume: true,
+            checkpoint,
         });
     };
 
@@ -296,14 +392,23 @@ class CurriculumAgentLab extends React.Component {
 
     runPipelineForAgents = async (
         agentTypes,
-        { splitOptions = null, testOnly = false, resume = false, strictNoClues = false } = {}
+        {
+            splitOptions = null,
+            testOnly = false,
+            resume = false,
+            strictNoClues = false,
+            checkpoint = null,
+        } = {}
     ) => {
         const options = splitOptions || this.getSplitOptions();
         if (splitOptions) {
             this.setState({
                 splitMode: options.mode,
                 testPerLesson: options.testPerLesson ?? this.state.testPerLesson,
-                testRatio: options.testRatio ?? this.state.testRatio,
+                testRatio:
+                    splitOptions && "testRatio" in splitOptions
+                        ? splitOptions.testRatio
+                        : options.testRatio ?? this.state.testRatio,
             });
         }
 
@@ -326,24 +431,58 @@ class CurriculumAgentLab extends React.Component {
 
         try {
             let report;
+            const checkpointForRun = checkpoint || (resume || testOnly ? this.state.checkpoint : null);
             if (testOnly) {
-                report = await this.orchestrator.runTestOnly({ strictNoClues });
+                report = await this.orchestrator.runTestOnly({
+                    strictNoClues,
+                    checkpoint: checkpointForRun,
+                });
             } else if (resume) {
-                report = await this.orchestrator.resumeTraining();
+                report = await this.orchestrator.resumeTraining(checkpointForRun);
             } else {
                 report = await this.orchestrator.runFullPipeline();
             }
 
             const clean = buildStorableCurriculumReport(report) || report;
-            await this.reloadCheckpoint();
+            const testSucceeded = Boolean(clean.testEvaluation);
+            const { course, browserStorage } = this.props;
+
+            if (testSucceeded && browserStorage) {
+                await browserStorage
+                    .removeByKey(AGENT_CURRICULUM_CHECKPOINT_KEY(course.courseName))
+                    .catch(() => {});
+            } else {
+                await this.reloadCheckpoint();
+            }
+            let reportForUi = clean;
+            if (browserStorage && clean.testEvaluation) {
+                const saved = await loadAndExportCurriculumReport(
+                    browserStorage,
+                    course.courseName
+                );
+                if (saved?.testEvaluation) {
+                    reportForUi = saved;
+                }
+            }
 
             const interrupted = Boolean(clean.interrupted);
+            const hasReportPayload =
+                Boolean(clean.testEvaluation) ||
+                (Array.isArray(clean.trainingLog) && clean.trainingLog.length > 0);
+            const normalizedReport = hasReportPayload
+                ? this.normalizeReportInState(reportForUi) || reportForUi
+                : this.state.report;
+            const agentTypesForRun = agentTypes?.length ? agentTypes : ALL_AGENT_TYPES;
             this.setState({
                 running: false,
-                report: clean.testEvaluation || clean.trainingLog ? clean : this.state.report,
-                reportSavedAt: clean.timestamp || this.state.reportSavedAt,
+                report: normalizedReport,
+                reportSavedAt:
+                    normalizedReport?.timestamp || clean.timestamp || this.state.reportSavedAt,
+                pipelineAgentTypes: agentTypesForRun,
+                activeAgentTab: this.resolveActiveAgentTab(agentTypesForRun),
                 splitPreview: clean.split || this.state.splitPreview,
                 phase: interrupted ? "paused" : "done",
+                checkpoint: testSucceeded ? null : this.state.checkpoint,
                 trainingProgress: interrupted
                     ? clean.checkpoint?.progress || this.state.trainingProgress
                     : null,
@@ -352,7 +491,21 @@ class CurriculumAgentLab extends React.Component {
         } catch (err) {
             console.error(err);
             await this.reloadCheckpoint();
-            this.setState({ running: false, phase: "paused", progressLabel: null });
+            const message = err?.message || String(err);
+            this.setState((prev) => ({
+                running: false,
+                phase: "paused",
+                progressLabel: null,
+                copyMessage: `Run failed: ${message}`,
+                events: [
+                    ...prev.events.slice(-199),
+                    {
+                        type: "pipeline-error",
+                        label: `=== Error: ${message} ===`,
+                        timestamp: Date.now(),
+                    },
+                ],
+            }));
         }
     };
 
@@ -513,16 +666,39 @@ class CurriculumAgentLab extends React.Component {
 
     repairSavedReport = async () => {
         const { course, browserStorage } = this.props;
-        const clean = buildStorableCurriculumReport(this.state.report);
+        const normalized = this.normalizeReportInState(this.state.report);
+        const clean = buildStorableCurriculumReport(normalized);
         if (!clean || !browserStorage) return;
         const key = AGENT_CURRICULUM_REPORT_STORAGE_KEY(course.courseName);
         await browserStorage.setByKey(key, clean).catch(() => {});
         this.setState({ report: clean, copyMessage: "Report repaired and re-saved." });
     };
 
+    normalizeReportInState(report) {
+        if (!report) return null;
+        if (report.testEvaluation) return report;
+        // Recover from precedence bug: state.report was set to testEvaluation only
+        if (report.scoreboard || report.problemResults || report.summary) {
+            return {
+                timestamp: report.timestamp || this.state.reportSavedAt,
+                strictNoClues: report.strictNoClues,
+                testEvaluation: report,
+                testProblems:
+                    this.state.report?.testProblems ||
+                    this.state.splitPreview?.testProblems ||
+                    [],
+                split: this.state.report?.split || this.state.splitPreview,
+                courseName: this.props.course?.courseName,
+            };
+        }
+        return report;
+    }
+
     getExportData = () => {
         try {
-            return buildExportableCurriculumReport(this.state.report);
+            return buildExportableCurriculumReport(
+                this.normalizeReportInState(this.state.report)
+            );
         } catch (err) {
             console.error("Failed to build export data from state", err);
             return null;
@@ -718,7 +894,7 @@ class CurriculumAgentLab extends React.Component {
                             <TableCell>Problem</TableCell>
                             <TableCell>Lesson</TableCell>
                             {agentTypes.map((t) => (
-                                <TableCell key={t} align="center" style={{ color: AGENT_META[t].color }}>
+                                <TableCell key={t} align="center" style={{ color: AGENT_META[t]?.color }}>
                                     {agentTableLabel(t)}
                                 </TableCell>
                             ))}
@@ -819,7 +995,7 @@ class CurriculumAgentLab extends React.Component {
                             if (!s) return null;
                             return (
                                 <TableRow key={t}>
-                                    <TableCell style={{ color: AGENT_META[t].color, fontWeight: 600 }}>
+                                    <TableCell style={{ color: AGENT_META[t]?.color, fontWeight: 600 }}>
                                         {s.label}
                                     </TableCell>
                                     <TableCell align="right">
@@ -841,10 +1017,11 @@ class CurriculumAgentLab extends React.Component {
     }
 
     renderProblemDetail(report) {
-        const { activeAgentTab, activeProblemTab, showProblemDetail } = this.state;
+        const { activeProblemTab, showProblemDetail } = this.state;
         if (!showProblemDetail || !report?.testEvaluation) return null;
 
         const agentTypes = this.getActiveAgentTypes();
+        const activeAgentTab = this.resolveActiveAgentTab(agentTypes);
         const scoreboard = report.testEvaluation.scoreboard || [];
         const row = scoreboard[activeProblemTab];
         if (!row) return null;
@@ -869,7 +1046,7 @@ class CurriculumAgentLab extends React.Component {
                             key={t}
                             value={t}
                             label={agentTableLabel(t)}
-                            style={{ color: AGENT_META[t].color }}
+                            style={{ color: AGENT_META[t]?.color }}
                         />
                     ))}
                 </Tabs>
@@ -908,6 +1085,11 @@ class CurriculumAgentLab extends React.Component {
         const agents = (checkpoint.agentTypes || [])
             .map((t) => AGENT_META[t]?.shortLabel || t)
             .join(", ");
+        const pendingUnits = this.getCheckpointPendingUnits();
+        const pendingLabel = pendingUnits
+            .map((u) => u.lessonTopics || u.lessonName || u.lessonId)
+            .join(", ");
+        const allTrainProblemsDone = this.canContinueToTestFromCheckpoint();
 
         return (
             <Box
@@ -921,13 +1103,44 @@ class CurriculumAgentLab extends React.Component {
                 <Typography variant="body2" paragraph style={{ lineHeight: 1.6 }}>
                     Progress saved: {progress.completedUnits || 0}/{progress.totalUnits || "?"} lesson
                     jobs ({progress.completedProblems || 0}/{progress.totalProblems || "?"} train
-                    problems). Agents: {agents || "unknown"}. Export a backup before resuming if
-                    you want a portable copy.
+                    problems). Agents: {agents || "unknown"}.
+                    {pendingUnits.length > 0 && !allTrainProblemsDone && (
+                        <> Remaining: {pendingLabel}.</>
+                    )}
+                    {allTrainProblemsDone && (
+                        <>
+                            {" "}
+                            All train problems are complete — resume will go straight to the test
+                            phase.
+                        </>
+                    )}{" "}
+                    Export a backup before resuming if you want a portable copy.
                 </Typography>
                 <Box display="flex" style={{ gap: 8, flexWrap: "wrap" }}>
                     <Button variant="contained" color="primary" onClick={this.resumeFromCheckpoint}>
-                        Resume training
+                        {allTrainProblemsDone ? "Run test phase now" : "Resume training"}
                     </Button>
+                    {allTrainProblemsDone && (
+                        <Button
+                            variant="outlined"
+                            color="primary"
+                            onClick={() => {
+                                const splitOptions = checkpoint.splitOptions || {
+                                    mode: checkpoint.split?.mode,
+                                    testRatio: checkpoint.split?.testRatio,
+                                    testPerLesson: checkpoint.split?.testPerLesson,
+                                    seed: checkpoint.split?.seed,
+                                };
+                                this.runPipelineForAgents(checkpoint.agentTypes, {
+                                    testOnly: true,
+                                    splitOptions,
+                                    checkpoint,
+                                });
+                            }}
+                        >
+                            Run test only (skip resume)
+                        </Button>
+                    )}
                     <Button variant="outlined" onClick={this.clearCheckpoint}>
                         Discard checkpoint
                     </Button>
@@ -1013,6 +1226,39 @@ class CurriculumAgentLab extends React.Component {
         );
     }
 
+    renderReportResults(report) {
+        const displayReport = this.normalizeReportInState(report) || report;
+        if (!displayReport?.testEvaluation && !displayReport?.scoreboard) return null;
+
+        return (
+            <Box mt={3}>
+                <Divider />
+                {displayReport.strictNoClues || displayReport.testEvaluation?.strictNoClues ? (
+                    <Chip
+                        label="Strict no-clue test results"
+                        style={{
+                            marginTop: 16,
+                            marginBottom: 8,
+                            marginRight: 8,
+                            backgroundColor: "#e8f5e9",
+                            color: "#1b5e20",
+                        }}
+                    />
+                ) : null}
+                {displayReport.testEvaluation?.winner && (
+                    <Chip
+                        label={`Best on test set: ${displayReport.testEvaluation.winner.agentLabel}`}
+                        color="primary"
+                        style={{ marginTop: 16, marginBottom: 8 }}
+                    />
+                )}
+                {this.renderSummaryScores(displayReport)}
+                {this.renderTestProblemSet(displayReport)}
+                {this.renderProblemDetail(displayReport)}
+            </Box>
+        );
+    }
+
     render() {
         const { course, history, courseNum } = this.props;
         const {
@@ -1027,12 +1273,13 @@ class CurriculumAgentLab extends React.Component {
             showJsonPreview,
         } = this.state;
         const split = report?.split || splitPreview;
+        const displayReport = this.normalizeReportInState(report);
         const trainingDone =
             checkpoint?.status === CHECKPOINT_STATUS.TRAINING_COMPLETE ||
             checkpoint?.status === CHECKPOINT_STATUS.COMPLETE ||
             !!checkpoint?.trainingCompletedAt;
         const hasSavedAgents = trainingDone;
-        const hasReport = !!report?.testEvaluation || !!reportSavedAt;
+        const hasReport = !!displayReport?.testEvaluation || !!reportSavedAt;
         const canResume = this.canResumeTraining();
 
         return (
@@ -1442,33 +1689,7 @@ class CurriculumAgentLab extends React.Component {
                         ))}
                     </Paper>
 
-                    {report && (
-                        <Box mt={3}>
-                            <Divider />
-                            {report.strictNoClues || report.testEvaluation?.strictNoClues ? (
-                                <Chip
-                                    label="Strict no-clue test results"
-                                    style={{
-                                        marginTop: 16,
-                                        marginBottom: 8,
-                                        marginRight: 8,
-                                        backgroundColor: "#e8f5e9",
-                                        color: "#1b5e20",
-                                    }}
-                                />
-                            ) : null}
-                            {report.testEvaluation?.winner && (
-                                <Chip
-                                    label={`Best on test set: ${report.testEvaluation.winner.agentLabel}`}
-                                    color="primary"
-                                    style={{ marginTop: 16, marginBottom: 8 }}
-                                />
-                            )}
-                            {this.renderSummaryScores(report)}
-                            {this.renderTestProblemSet(report)}
-                            {this.renderProblemDetail(report)}
-                        </Box>
-                    )}
+                    {report && this.renderReportResults(report)}
                 </Paper>
             </Box>
         );

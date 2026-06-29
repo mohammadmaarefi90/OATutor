@@ -44,6 +44,13 @@ import {
     summarizeTrainingRevealForEvent,
     TRAINING_PATH_VERSION,
 } from "./llm/propositionTrainingPath.js";
+import {
+    applyApsToPropEngine,
+    alignAttemptToPropositions,
+    isPropApsEnabled,
+    summarizeApsIngestForEvent,
+    APS_VERSION,
+} from "./llm/propositionSegmentation.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -57,6 +64,7 @@ export default class LocalPropositionalLLMAgent extends BaseAgent {
         this.reasoningGraph = new ReasoningGraph(this.lesson.id, agentType);
         this.propEngine = createAgentPropBKTEngine();
         this._ingestedLesson = false;
+        this._apsApplied = false;
         this.llmCalls = 0;
         this.llmSuccesses = 0;
         this.llmFallbacks = 0;
@@ -90,9 +98,49 @@ export default class LocalPropositionalLLMAgent extends BaseAgent {
         this._ingestedLesson = true;
     }
 
+    async _applyApsIfNeeded() {
+        this._ensureLessonIngested();
+        if (this._apsApplied) return null;
+
+        const alreadyAps = Object.values(this.propEngine.stepContent || {}).some(
+            (sc) => sc.apsVersion
+        );
+        if (alreadyAps) {
+            this._apsApplied = true;
+            return null;
+        }
+
+        const settings = this.llmSettings || getLLMSettingsSync();
+        this.llmSettings = settings;
+        if (!isPropApsEnabled(settings, this.agentType)) {
+            this._apsApplied = true;
+            return null;
+        }
+
+        try {
+            const result = await applyApsToPropEngine(
+                this.propEngine,
+                this.lesson.id,
+                this.problems,
+                settings
+            );
+            this._apsApplied = true;
+            this._emit("prop-aps-ingest", summarizeApsIngestForEvent(result));
+            return result;
+        } catch (err) {
+            console.error("APS layer failed; using legacy proposition ingest", err);
+            this._apsApplied = true;
+            this._emit("llm-error", {
+                message: `APS segmentation failed (${err.message || "unknown"}); using legacy ingest.`,
+            });
+            return null;
+        }
+    }
+
     async loadPersistedState() {
         if (!this.browserStorage) {
             this._ensureLessonIngested();
+            await this._applyApsIfNeeded();
             return;
         }
         const { getByKey, setByKey } = this.browserStorage;
@@ -111,10 +159,16 @@ export default class LocalPropositionalLLMAgent extends BaseAgent {
         if (propData) {
             this.propEngine = PropositionBKTEngine.fromJSON(propData);
             this._ingestedLesson = true;
+            if (
+                Object.values(this.propEngine.stepContent || {}).some((sc) => sc.apsVersion)
+            ) {
+                this._apsApplied = true;
+            }
         } else {
             this._ensureLessonIngested();
         }
         this._persist = { getByKey, setByKey };
+        await this._applyApsIfNeeded();
     }
 
     async savePersistedState() {
@@ -213,13 +267,36 @@ export default class LocalPropositionalLLMAgent extends BaseAgent {
         });
     }
 
-    _processPropAttempt(step, problem, { correct, firstTry }) {
+    _processPropAttempt(step, problem, { correct, firstTry, attempt = null }) {
+        const settings = this.llmSettings || getLLMSettingsSync();
+        let propIds = null;
+
+        if (
+            isPropApsEnabled(settings, this.agentType) &&
+            settings.propApsAlignAttempts &&
+            attempt
+        ) {
+            const aligned = alignAttemptToPropositions(attempt, this.propEngine, {
+                lessonId: this.lesson.id,
+                stepId: step.id,
+            });
+            if (aligned.matchedPropIds.length > 0) {
+                propIds = aligned.matchedPropIds;
+                this._emit("prop-aps-attempt", {
+                    stepId: step.id,
+                    matchedCount: propIds.length,
+                    segments: aligned.segments.slice(0, 5),
+                });
+            }
+        }
+
         return this._processPropEvent({
             type: "attempt",
             stepId: step.id,
             problemId: problem.id,
             correct,
             firstTry,
+            propIds,
         });
     }
 
@@ -625,7 +702,11 @@ export default class LocalPropositionalLLMAgent extends BaseAgent {
         let isCorrect = attempt ? this._checkStepAnswer(step, attempt, seed) : false;
         finalAttemptAfter = attempt;
 
-        this._processPropAttempt(step, problem, { correct: isCorrect, firstTry: true });
+        this._processPropAttempt(step, problem, {
+            correct: isCorrect,
+            firstTry: true,
+            attempt: [llmBefore?.reasoning, attempt].filter(Boolean).join("\n") || attempt,
+        });
 
         if (!isCorrect && this._shouldAllowHints()) {
             firstTry = false;
@@ -638,11 +719,19 @@ export default class LocalPropositionalLLMAgent extends BaseAgent {
             this._recordReasoningAction("hint-fallback", source);
             if (attempt) isCorrect = this._checkStepAnswer(step, attempt, seed);
 
-            this._processPropAttempt(step, problem, { correct: isCorrect, firstTry: false });
+            this._processPropAttempt(step, problem, {
+                correct: isCorrect,
+                firstTry: false,
+                attempt,
+            });
         } else if (!isCorrect && this._strictNoClues) {
             firstTry = false;
             source = "strict-no-clue";
-            this._processPropAttempt(step, problem, { correct: false, firstTry: false });
+            this._processPropAttempt(step, problem, {
+                correct: false,
+                firstTry: false,
+                attempt: [llmBefore?.reasoning, attempt].filter(Boolean).join("\n") || attempt,
+            });
         }
 
         this._processPropEvent({ type: "session_end", stepId: step.id });
@@ -761,6 +850,10 @@ export default class LocalPropositionalLLMAgent extends BaseAgent {
             propTrainingHintMode: resolvePropTrainingHintMode(settings),
             propTrainingRetryLlm: settings.propTrainingRetryLlm !== false,
             trainingPathVersion: TRAINING_PATH_VERSION,
+            propApsEnabled: isPropApsEnabled(settings, this.agentType),
+            propApsMode: settings.propApsMode,
+            propApsAlignAttempts: settings.propApsAlignAttempts === true,
+            apsVersion: isPropApsEnabled(settings, this.agentType) ? APS_VERSION : null,
             provider: settings.provider,
             localBaseUrl: settings.localBaseUrl,
             localModel: settings.localModel,

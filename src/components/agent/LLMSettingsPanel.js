@@ -24,6 +24,7 @@ import {
     SKILL_HINT_MODES,
     PROP_HINT_MODES,
     PROP_TRAINING_HINT_MODES,
+    PROP_APS_MODES,
     SKILL_BKT_BACKEND,
     loadLLMSettings,
     saveLLMSettings,
@@ -34,6 +35,7 @@ import {
     PROP_HINT_MODE_META,
 } from "../../agent/llm/beliefRetrieval.js";
 import { PROP_TRAINING_HINT_MODE_META } from "../../agent/llm/propositionTrainingPath.js";
+import { PROP_APS_MODE_META } from "../../agent/llm/propositionSegmentation.js";
 import { probeLocalLLMServer, resetOpenAIClient } from "../../agent/llm/llmClient.js";
 
 class LLMSettingsPanel extends React.Component {
@@ -74,7 +76,8 @@ class LLMSettingsPanel extends React.Component {
             field === "propPlanningMaxPivots" ||
             field === "propPlanningMaxChains" ||
             field === "propPlanningMaxHints" ||
-            field === "propTrainingMaxHintsPerStep"
+            field === "propTrainingMaxHintsPerStep" ||
+            field === "propApsMaxPropositions"
         ) {
             value = Number(value) || DEFAULT_LLM_SETTINGS[field];
         }
@@ -95,6 +98,9 @@ class LLMSettingsPanel extends React.Component {
             () => {
                 if (field === "propPlanningEnabled") {
                     this.persistSettings(`Hint planning ${value ? "enabled" : "disabled"}.`);
+                }
+                if (field === "propApsEnabled") {
+                    this.persistSettings(`Proposition segmentation (APS) ${value ? "enabled" : "disabled"}.`);
                 }
             }
         );
@@ -513,6 +519,89 @@ class LLMSettingsPanel extends React.Component {
                                         onClick={(e) => e.stopPropagation()}
                                     />
                                 </Grid>
+
+                                <Grid item xs={12}>
+                                    <Typography variant="subtitle2" style={{ marginTop: 4 }}>
+                                        Proposition segmentation — APS (Prop BKT + Chain + Tree)
+                                    </Typography>
+                                    <Typography variant="caption" color="textSecondary" display="block">
+                                        Optional layer that splits step and hint text into finer atomic
+                                        propositions before BKT. No fine-tuning required for heuristic or
+                                        LLM-prompt modes.
+                                    </Typography>
+                                </Grid>
+                                <Grid item xs={12}>
+                                    <FormControlLabel
+                                        control={
+                                            <Checkbox
+                                                checked={!!settings.propApsEnabled}
+                                                onChange={this.handleCheckboxChange("propApsEnabled")}
+                                                onClick={(e) => e.stopPropagation()}
+                                                color="primary"
+                                            />
+                                        }
+                                        label="Enable proposition segmentation (APS)"
+                                        onClick={(e) => e.stopPropagation()}
+                                    />
+                                </Grid>
+                                {settings.propApsEnabled ? (
+                                    <>
+                                        <Grid item xs={12} sm={6}>
+                                            <FormControl fullWidth variant="outlined" size="small">
+                                                <InputLabel>APS mode</InputLabel>
+                                                <Select
+                                                    value={
+                                                        settings.propApsMode ||
+                                                        PROP_APS_MODES.HEURISTIC
+                                                    }
+                                                    onChange={this.handleChange("propApsMode")}
+                                                    label="APS mode"
+                                                >
+                                                    {Object.values(PROP_APS_MODES).map((mode) => (
+                                                        <MenuItem key={mode} value={mode}>
+                                                            {PROP_APS_MODE_META[mode]?.label || mode}
+                                                        </MenuItem>
+                                                    ))}
+                                                </Select>
+                                                <Typography variant="caption" color="textSecondary">
+                                                    {PROP_APS_MODE_META[settings.propApsMode]
+                                                        ?.description || ""}
+                                                </Typography>
+                                            </FormControl>
+                                        </Grid>
+                                        <Grid item xs={12} sm={6}>
+                                            <TextField
+                                                fullWidth
+                                                size="small"
+                                                variant="outlined"
+                                                label="Max propositions per text block"
+                                                type="number"
+                                                value={settings.propApsMaxPropositions ?? 12}
+                                                onChange={this.handleChange("propApsMaxPropositions")}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12}>
+                                            <FormControlLabel
+                                                control={
+                                                    <Checkbox
+                                                        checked={!!settings.propApsAlignAttempts}
+                                                        onChange={this.handleCheckboxChange(
+                                                            "propApsAlignAttempts"
+                                                        )}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        color="primary"
+                                                    />
+                                                }
+                                                label="Align LLM attempts to propositions (selective BKT update)"
+                                                onClick={(e) => e.stopPropagation()}
+                                            />
+                                            <Typography variant="caption" color="textSecondary" display="block">
+                                                When on, attempt evidence updates matched props only (not all
+                                                active hints). Uses heuristic overlap — no fine-tuning.
+                                            </Typography>
+                                        </Grid>
+                                    </>
+                                ) : null}
                             </>
                         )}
                     </Grid>

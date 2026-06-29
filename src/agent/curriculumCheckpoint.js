@@ -67,16 +67,55 @@ export function buildTrainingProgress(units, completedUnitKeys) {
     };
 }
 
+function splitScalarEqual(a, b) {
+    if (a == null && b == null) return true;
+    return a === b;
+}
+
 export function splitConfigMatches(checkpointSplit, currentSplit) {
     if (!checkpointSplit || !currentSplit) return false;
+    const testIdsMatch =
+        JSON.stringify(checkpointSplit.testProblemIds || []) ===
+        JSON.stringify(currentSplit.testProblemIds || []);
     return (
         checkpointSplit.mode === currentSplit.mode &&
         checkpointSplit.seed === currentSplit.seed &&
-        checkpointSplit.testPerLesson === currentSplit.testPerLesson &&
-        checkpointSplit.testRatio === currentSplit.testRatio &&
-        JSON.stringify(checkpointSplit.testProblemIds || []) ===
-            JSON.stringify(currentSplit.testProblemIds || [])
+        splitScalarEqual(checkpointSplit.testPerLesson, currentSplit.testPerLesson) &&
+        splitScalarEqual(checkpointSplit.testRatio, currentSplit.testRatio) &&
+        testIdsMatch
     );
+}
+
+/** Units not yet recorded in the checkpoint. */
+export function getPendingTrainingUnits(units, completedUnitKeys) {
+    const done = new Set(completedUnitKeys || []);
+    return (units || []).filter((unit) => !done.has(unit.key));
+}
+
+/**
+ * When every train problem is already covered by completed units, mark any
+ * remaining units complete (e.g. interrupted before final checkpoint write).
+ * @returns {string[]} newly added unit keys
+ */
+export function reconcileCompletedUnitsIfAllProblemsDone(units, completedUnitKeys) {
+    const completed = [...(completedUnitKeys || [])];
+    const progress = buildTrainingProgress(units, completed);
+    if (
+        progress.totalProblems <= 0 ||
+        progress.completedProblems < progress.totalProblems
+    ) {
+        return [];
+    }
+
+    const done = new Set(completed);
+    const added = [];
+    for (const unit of units || []) {
+        if (!done.has(unit.key)) {
+            done.add(unit.key);
+            added.push(unit.key);
+        }
+    }
+    return added;
 }
 
 export function agentTypesMatch(checkpointTypes, currentTypes) {
@@ -85,15 +124,45 @@ export function agentTypesMatch(checkpointTypes, currentTypes) {
     return a === b && a.length > 0;
 }
 
+export function isTrainingProgressComplete(checkpoint) {
+    if (!checkpoint) return false;
+    if (checkpoint.status === CHECKPOINT_STATUS.TRAINING_COMPLETE) return true;
+    const p = checkpoint.progress || {};
+    if (p.totalProblems > 0 && p.completedProblems >= p.totalProblems) return true;
+    if (p.totalUnits > 0 && p.completedUnits >= p.totalUnits) return true;
+    return false;
+}
+
+export function allTrainingUnitKeys(units) {
+    return (units || []).map((unit) => unit.key);
+}
+
 export function canResumeCheckpoint(checkpoint, { agentTypes, split } = {}) {
     if (!checkpoint) return false;
+
+    const progress = checkpoint.progress || {};
+    const trainingProblemsDone =
+        progress.totalProblems > 0 &&
+        progress.completedProblems >= progress.totalProblems;
+    const unitsIncomplete =
+        progress.totalUnits > 0 && progress.completedUnits < progress.totalUnits;
+
+    if (
+        checkpoint.status === CHECKPOINT_STATUS.TRAINING_COMPLETE ||
+        (trainingProblemsDone && unitsIncomplete)
+    ) {
+        if (agentTypes && !agentTypesMatch(checkpoint.agentTypes, agentTypes)) {
+            return false;
+        }
+        return true;
+    }
+
     if (
         checkpoint.status !== CHECKPOINT_STATUS.IN_PROGRESS &&
         checkpoint.status !== CHECKPOINT_STATUS.INTERRUPTED
     ) {
         return false;
     }
-    const progress = checkpoint.progress || {};
     if (progress.totalUnits > 0 && progress.completedUnits >= progress.totalUnits) {
         return false;
     }

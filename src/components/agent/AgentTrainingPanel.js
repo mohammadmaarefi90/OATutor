@@ -129,6 +129,12 @@ class AgentTrainingPanel extends React.Component {
                 return `${prefix}Training hint #${event.hintsRevealedTotal ?? "?"}: ${event.reason || "reveal"} (${event.hintId || ""})`;
             case "prop-training-retry":
                 return `${prefix}LLM retry after ${event.hintsRevealed ?? 0} hint(s): ${event.isCorrect ? "✓" : "✗"}`;
+            case "prop-aps-ingest":
+                return `${prefix}APS ingest (${event.mode || "heuristic"}): ${event.stepsProcessed ?? 0} step(s), ${event.totalStepProps ?? 0} step props, ${event.totalHintProps ?? 0} hint props`;
+            case "prop-aps-step":
+                return `${prefix}APS step ${event.stepId}: ${event.stepPropCount ?? 0} step + ${event.hintPropCount ?? 0} hint props (${event.source || "heuristic"})`;
+            case "prop-aps-attempt":
+                return `${prefix}APS attempt align: ${event.matchedCount ?? 0} proposition(s) matched`;
             case "learn":
                 return `${prefix}Learned from hints on ${event.stepId}`;
             case "step-complete":

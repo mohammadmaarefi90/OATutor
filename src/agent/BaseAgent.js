@@ -223,8 +223,9 @@ export default class BaseAgent {
             problemCount: problemIds.length,
         });
 
-        for (const problemId of problemIds) {
+        for (let i = 0; i < problemIds.length; i++) {
             if (this.cancelled) break;
+            const problemId = problemIds[i];
             const problem = this.problems.find((p) => p.id === problemId);
             if (!problem) continue;
 
@@ -235,6 +236,15 @@ export default class BaseAgent {
                 await this.saveReasoningGraph?.();
             }
             this.reasoningSession = null;
+
+            run.problemsCompleted = (run.problemsCompleted || 0) + 1;
+            this._emit("train-problem-progress", {
+                problemId,
+                problemTitle: problem.title,
+                completed: run.problemsCompleted,
+                total: problemIds.length,
+                trainingMode: run.trainingMode,
+            });
 
             run.masteryEnd = this._lessonMastery();
             run.memoryEnd = this.getMemoryStats?.() || {};

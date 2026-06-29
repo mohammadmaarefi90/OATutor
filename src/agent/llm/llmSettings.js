@@ -34,6 +34,12 @@ export const PROP_TRAINING_HINT_MODES = {
     PLANNER_GUIDED: "planner-guided",
 };
 
+/** APS — abstractive proposition segmentation for Prop BKT ingest / attempts. */
+export const PROP_APS_MODES = {
+    HEURISTIC: "heuristic",
+    LLM_PROMPT: "llm-prompt",
+};
+
 /** Skill BKT backend for Local GPT-OSS only. */
 export const SKILL_BKT_BACKEND = {
     CLASSIC: "classic",
@@ -104,6 +110,11 @@ export const DEFAULT_LLM_SETTINGS = {
     propTrainingRetryLlm: true,
     propTrainingAllowAnswerKey: true,
     propTrainingMaxHintsPerStep: 8,
+    /** Prop BKT family: optional APS layer (no fine-tuning required for heuristic / llm-prompt) */
+    propApsEnabled: false,
+    propApsMode: PROP_APS_MODES.HEURISTIC,
+    propApsAlignAttempts: false,
+    propApsMaxPropositions: 12,
     /** Local GPT-OSS only: classic in-browser BKT vs pyBKT roster service */
     skillBktBackend: SKILL_BKT_BACKEND.CLASSIC,
     pyBktBaseUrl: "http://127.0.0.1:8090",
@@ -144,6 +155,12 @@ export function getLLMSettingsSync() {
         const merged = applyEnvLLMOverrides({ ...DEFAULT_LLM_SETTINGS, ...JSON.parse(raw) });
         if (typeof merged.propPlanningEnabled === "string") {
             merged.propPlanningEnabled = merged.propPlanningEnabled === "true";
+        }
+        if (typeof merged.propApsEnabled === "string") {
+            merged.propApsEnabled = merged.propApsEnabled === "true";
+        }
+        if (typeof merged.propApsAlignAttempts === "string") {
+            merged.propApsAlignAttempts = merged.propApsAlignAttempts === "true";
         }
         return merged;
     } catch {
